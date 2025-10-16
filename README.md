@@ -189,4 +189,4 @@ What this command does:
 
 --q --q-bits 8: Converts to 8bit 
 
-Note: This process may take several ( < 5 for me ) minutes depending mostly on your internet connection. 
+Note: This process may take several ( < 5 for me ) minutes depending mostly on your internet connection. You can also use --q-bits 4 to convert to 4bit if you need smaller. 
