@@ -1,0 +1,11 @@
+# T.O.M. CLI Requirements
+
+# MLX for Apple Silicon model inference
+mlx
+mlx-lm
+
+# CLI framework
+typer
+
+# System/process monitoring
+psutil
