@@ -1,4 +1,4 @@
-# T.O.M. CLI
+# T.O.M. Typer Orchestrated Model
 
 A minimal, hackable agent framework for running Qwen3-4B-Thinking locally on Apple Silicon. A starting point for building your own AI tools without API costs, entirely on your Mac.
 
