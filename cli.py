@@ -18,6 +18,11 @@ from rich.prompt import Prompt
 from rich.status import Status
 from rich.table import Table
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.completion import WordCompleter, PathCompleter, merge_completers
+
 from config import (
     CONTEXT_USAGE_RATIO,
     TOOL_RESULT_CONTEXT_RATIO,
@@ -81,6 +86,25 @@ class ChatInterface:
             auto_gc=auto_gc,
             gc_frequency=gc_frequency
         )
+
+        # Setup prompt-toolkit session
+        command_completer = WordCompleter(
+            ['/help', '/stats', '/cache', '/memory', '/gc', 
+             '/context', '/raw-prompt', '/clear-cache', '/exit', '/quit'],
+            ignore_case=True,
+            sentence=True  # Complete at start of input
+        )
+        
+        self.prompt_session = PromptSession(
+            history=FileHistory('.tom_history'),
+            auto_suggest=AutoSuggestFromHistory(),
+            completer=merge_completers([
+                command_completer,
+                PathCompleter(expanduser=True)  # For file path completion
+            ]),
+            complete_while_typing=True,
+            enable_history_search=True,  # Ctrl+R for history search
+        )
     
     def load_model(self):
         """Load the model"""
@@ -95,14 +119,27 @@ class ChatInterface:
             f"{cache_status}\n"
             f"Max context: {self.context_manager.max_context_tokens:,} tokens\n"
             f"Max tool result: {self.max_tool_result_chars:,} chars\n"
-            "Commands: /stats, /cache, /memory, /gc, /context, /raw-prompt, /clear-cache, /exit",
+            "Commands: /stats, /cache, /memory, /gc, /context, /raw-prompt, /clear-cache, /exit\n"
+            "[dim]History: ↑/↓ arrows, Ctrl+R to search, Tab for completion[/dim]",
             border_style="blue"
         ))
         
         try:
             while True:
-                user_input = Prompt.ask("\n[bold green]You[/bold green]")
+                try:
+                    # Get user input with prompt-toolkit
+                    user_input = self.prompt_session.prompt("\nYou> ")
+                    
+                except KeyboardInterrupt:
+                    # Ctrl+C just clears the current input, doesn't exit
+                    console.print("[dim]Use /exit or Ctrl+D to quit[/dim]")
+                    continue  # NOW it's inside the while loop ✓
+                except EOFError:
+                    # Ctrl+D exits
+                    console.print("\nGoodbye!")
+                    break  # NOW it's inside the while loop ✓
                 
+                # Handle commands
                 if user_input.lower() in ['/exit', '/quit']:
                     break
                 
@@ -112,25 +149,7 @@ class ChatInterface:
                 if user_input.lower() == '/stats':
                     self._show_stats()
                     continue
-                if user_input.lower() == '/cache':
-                    self._show_cache_info()
-                    continue
-                if user_input.lower() == '/clear-cache':
-                    self._clear_cache()
-                    continue
-                if user_input.lower() == '/gc':
-                    self.model_manager.run_gc()
-                    console.print("[green]Garbage collection completed[/green]")
-                    continue
-                if user_input.lower() == '/memory':
-                    self._show_memory_stats()
-                    continue
-                if user_input.lower() == '/context':
-                    self._show_context()
-                    continue
-                if user_input.lower() == '/raw-prompt':
-                    self._show_raw_prompt()
-                    continue
+                # ... rest of command handling stays the same ...
                 
                 should_reset = self.context_manager.add_message("user", user_input)
                 

@@ -41,7 +41,7 @@ def tool(name: str, description: str, parameters: Dict[str, Any] = None):
     return decorator
 
 
-@tool("get_datetime", "Return the current system date and time as a friendly string: 'H:MM:SS AM/PM on Month Dth, YYYY'")
+@tool("get_datetime", "Return the current system date and time as a friendly string: 'H:MM AM/PM on Month Dth, YYYY'")
 def get_datetime() -> str:
     """Get the current date and time in a friendly format."""
     now = datetime.now()
