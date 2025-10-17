@@ -467,9 +467,19 @@ class ChatInterface:
         
         table.add_row("Enabled", "Yes" if cache_info["enabled"] else "No")
         table.add_row("Path", cache_info["path"])
-        table.add_row("Loaded", "Yes" if cache_info["loaded"] else "No")
         
-        if cache_info["exists"] and "size_mb" in cache_info:
+        # Updated to match PromptCacheManager.get_stats() keys
+        if cache_info["enabled"]:
+            table.add_row("Max KV Size", str(cache_info.get("max_kv_size", "unlimited")))
+            table.add_row("KV Bits", str(cache_info.get("kv_bits", "no quantization")))
+            table.add_row("Generations", str(cache_info.get("generations", 0)))
+            table.add_row("Cache Hits", str(cache_info.get("cache_hits", 0)))
+            table.add_row("Cache Misses", str(cache_info.get("cache_misses", 0)))
+            
+            if cache_info.get("generations", 0) > 0:
+                table.add_row("Hit Rate", f"{cache_info.get('hit_rate', 0):.1f}%")
+        
+        if "size_mb" in cache_info:
             table.add_row("File Size", f"{cache_info['size_mb']:.2f} MB")
         
         console.print(table)
