@@ -46,6 +46,7 @@ pip install -r requirements.txt
 **Key dependencies installed:**
 - `mlx` and `mlx-lm` - Apple's MLX framework for efficient ML on Apple Silicon
 - `prompt_toolkit` - Advanced interactive prompt functionality
+- `rich` - Python library for rich text and beautiful formatting in the terminal
 - `psutil` - System and process utilities
 - `PySide6` - Qt-based GUI framework for the launcher interface (optional)
 
@@ -723,6 +724,7 @@ mlx-lm
 prompt-toolkit
 psutil
 PySide6 # For launcher.py GUI (optional)
+Rich
 ```
 
 **Note**: PySide6 is only required for the launcher GUI (`launcher.py`). The core CLI (`main.py`) works without it.
