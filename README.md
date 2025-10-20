@@ -45,9 +45,9 @@ pip install -r requirements.txt
 
 **Key dependencies installed:**
 - `mlx` and `mlx-lm` - Apple's MLX framework for efficient ML on Apple Silicon
-- `rich` - Beautiful terminal output and formatting
 - `prompt_toolkit` - Advanced interactive prompt functionality
 - `psutil` - System and process utilities
+- `PySide6` - Qt-based GUI framework for the launcher interface (optional)
 
 ### Step 4: Download and Convert the Model
 
@@ -69,17 +69,75 @@ python -m mlx_lm.convert \
 
 ### Step 5: Launch T.O.M.
 
+T.O.M. can be launched in two modes:
+
+#### Terminal Mode (CLI)
 ```bash
 python main.py
 ```
 
 On first launch, T.O.M. will initialize the prompt cache and be ready for interaction.
 
+#### Launcher Mode (GUI)
+```bash
+python launcher.py
+```
+
+The launcher provides a persistent GUI window with:
+- **System tray integration** - T.O.M. stays in your menu bar
+- **Dedicated app window** - Terminal-style interface with modern styling
+- **Always accessible** - Click the tray icon or menu item to show/hide
+- **Same functionality** - Full CLI capabilities in a GUI wrapper
+
+The launcher is a thin wrapper around the CLI, showcasing T.O.M.'s modular architecture. All core functionality remains in the CLI modules.
+
 ---
 
 ## Using T.O.M.
 
-### Interactive Interface
+T.O.M. offers two interface modes to suit different workflows:
+
+### Terminal Mode vs Launcher Mode
+
+**Terminal Mode (`python main.py`)**
+- Traditional command-line interface
+- Runs in your terminal window
+- Best for: Quick interactions, scripting, integration with other CLI tools
+
+**Launcher Mode (`python launcher.py`)**
+- GUI application with system tray integration
+- Dedicated window with terminal styling
+- Persistent menu bar presence
+- Best for: Extended sessions, always-on availability, desktop workflow integration
+
+Both modes provide identical functionality and share the same codebase.
+
+### Launcher Mode Features
+
+When using `launcher.py`, you get:
+
+#### System Tray Integration
+- **Menu bar icon**: T.O.M. appears in your system tray/menu bar
+- **Show/Hide**: Click the icon to toggle the window
+- **Quick access**: Right-click for context menu
+- **Background operation**: Minimize to tray without closing
+
+#### Window Management
+- **Persistent window**: Dedicated app window with terminal aesthetics
+- **Close to minimize**: Clicking close button minimizes to tray
+- **Full quit**: Use `/quit`, `/exit`, or select "Quit" from tray menu
+- **Keyboard shortcuts**: 
+  - `Ctrl+C` - Clear current input
+  - `Ctrl+D` or `/exit` - Quit application
+
+#### Visual Design
+- **Dark theme**: Professional dark color scheme
+- **Monospace font**: Clear, readable terminal-style text
+- **Syntax highlighting**: Color-coded output (thinking, errors, responses)
+- **Status bar**: Real-time connection status indicator
+- **Styled input**: Prominent input field with focus indication
+
+### Interactive Interface (Both Modes)
 
 T.O.M. provides a sophisticated interactive command-line interface powered by `prompt_toolkit`, offering features typically found in modern development tools:
 
@@ -186,7 +244,8 @@ You'll see this happen seamlessly in the conversation flow.
 ### Module Structure
 
 ```
-├── main.py                 # Application entry point
+├── main.py                 # CLI application entry point
+├── launcher.py             # GUI launcher with tray integration
 ├── cli.py                  # CLI interface and interactive loop
 ├── model_manager.py        # Model loading, caching, and generation
 ├── context_manager.py      # Conversation context and prompt building
@@ -199,8 +258,16 @@ You'll see this happen seamlessly in the conversation flow.
 ### Module Responsibilities
 
 #### `main.py`
-- Application entry point
-- Imports and launches the CLI app
+- CLI application entry point
+- Command-line argument parsing
+- Launches the terminal interface
+
+#### `launcher.py`
+- GUI application entry point
+- Qt-based window and system tray management
+- Wraps CLI process for GUI presentation
+- Terminal emulation with styled output
+- Showcases modular architecture - zero changes to core CLI
 
 #### `config.py`
 - Centralized configuration management
@@ -288,7 +355,7 @@ Display to User
 ### Import Dependencies
 
 ```
-main.py
+main.py (CLI entry)
   └─→ cli.py
         ├─→ config.py
         ├─→ context_manager.py
@@ -304,6 +371,9 @@ main.py
         │     └─→ utils.py
         └─→ utils.py
               └─→ config.py
+
+launcher.py (GUI entry)
+  └─→ main.py (spawned as subprocess)
 ```
 
 ---
@@ -386,6 +456,8 @@ python main.py --no-auto-gc
 
 ## Command-Line Options
 
+### Terminal Mode (main.py)
+
 ```bash
 # Basic usage
 python main.py
@@ -417,6 +489,15 @@ python main.py --debug
 # Combine options
 python main.py -m ./model --max-context 16000 --gc-frequency 10 --debug
 ```
+
+### Launcher Mode (launcher.py)
+
+```bash
+# Launch GUI application
+python launcher.py
+```
+
+The launcher automatically starts `main.py` as a subprocess with default settings. To use custom CLI options with the launcher, modify the model path or other settings directly in `launcher.py` or run `main.py` in terminal mode instead.
 
 ### Utility Commands
 
@@ -618,20 +699,18 @@ T.O.M. uses a hybrid token counting approach:
 
 ## Project Status
 
-This project demonstrates:
-
-- ✅ Production-ready architecture with separation of concerns
+- ✅ Architecture with separation of concerns
 - ✅ Advanced LLM optimization techniques (prompt caching, quantization)
-- ✅ Sophisticated interactive CLI with modern UX patterns
 - ✅ Extensible tool system for agentic capabilities
-- ✅ Intelligent resource management (context, memory, cache)
-- ✅ Comprehensive documentation and code organization
+- ✅ Modular design enabling multiple interface modes
+- ✅ Interactive CLI with modern UX patterns
+- ✅ Optional GUI launcher with system tray integration
+- ✅ Documentation and code organization
 
 **Future Enhancements:**
-- Additional tools (web search, file writing, code execution)
+- Additional tools 
 - Memory
-- Multi-model support
-- Conversation persistence and branching
+- Enhanced GUI features
 - Integration with external APIs
 
 ---
@@ -639,12 +718,14 @@ This project demonstrates:
 ## Requirements
 
 ```
-mlx>=0.4.0
-mlx-lm>=0.4.0
-rich>=13.0.0
-prompt-toolkit>=3.0.0
-psutil>=5.9.0
+mlx
+mlx-lm
+prompt-toolkit
+psutil
+PySide6 # For launcher.py GUI (optional)
 ```
+
+**Note**: PySide6 is only required for the launcher GUI (`launcher.py`). The core CLI (`main.py`) works without it.
 
 ---
 

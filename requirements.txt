@@ -1,4 +1,4 @@
-# T.O.M. CLI Requirements
+# T.O.M. Requirements
 
 # MLX for Apple Silicon model inference
 mlx
@@ -6,6 +6,11 @@ mlx-lm
 
 # CLI framework
 prompt-toolkit
+rich
 
 # System/process monitoring
 psutil
+
+# QT if using the launcher version
+# If you only want the CLI, you can omit this dependency
+PySide6

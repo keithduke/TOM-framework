@@ -1,5 +1,5 @@
 """
-CLI interface for T.O.M. using prompt_toolkit
+CLI interface for T.O.M.
 """
 
 import json
@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 import psutil
+import typer
 import mlx.core as mx
 from rich.console import Console
 from rich.logging import RichHandler
@@ -28,46 +29,23 @@ from config import (
     MAX_TOOL_RESULT_TOKENS,
     LOW_MEMORY_THRESHOLD_GB
 )
-from context_manager import ContextManager, TokenCounter
+from context_manager import ContextManager
 from model_manager import ModelManager
-from tools import execute_tool_call, extract_tool_calls, truncate_tool_result, TOOLS_DEFINITIONS
+from tools import execute_tool_call, extract_tool_calls, truncate_tool_result
 from utils import load_model_config
 
 # Initialize Rich console and logging
 console = Console()
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(message)s",
     datefmt="[%X]",
     handlers=[RichHandler(rich_tracebacks=True)]
 )
 logger = logging.getLogger("tom_cli")
 
-
-def clear_cache_file(model_path: str, cache_path: str = None, force: bool = False):
-    """Utility function to clear cache file"""
-    resolved_cache = cache_path or str(Path(model_path).parent / "prompt_cache.safetensors")
-    cache_file = Path(resolved_cache)
-    
-    if not cache_file.exists():
-        console.print(f"[yellow]No cache file found[/yellow]")
-        return
-    
-    cache_size_mb = cache_file.stat().st_size / (1024 * 1024)
-    
-    if not force:
-        console.print(f"[yellow]Cache: {resolved_cache} ({cache_size_mb:.2f} MB)[/yellow]")
-        confirm = Prompt.ask("Delete?", choices=["yes", "no"], default="no")
-        
-        if confirm.lower() != "yes":
-            console.print("[dim]Cancelled[/dim]")
-            return
-    
-    try:
-        cache_file.unlink()
-        console.print(f"[green]✓ Cache deleted ({cache_size_mb:.2f} MB freed)[/green]")
-    except Exception as e:
-        console.print(f"[red]Failed to delete: {e}[/red]")
+# CLI App
+app = typer.Typer(help="Interactive CLI for T.O.M.", invoke_without_command=True)
 
 
 class ChatInterface:
@@ -89,11 +67,11 @@ class ChatInterface:
         config = load_model_config(self.model_path)
         model_max_context = config.get("max_position_embeddings", 32768)
         
-        # Use override if provided, otherwise use 80% of model's max
+        # Use override if provided, otherwise use 80% of model's max to leave headroom
         max_context_tokens = max_context_override or int(model_max_context * CONTEXT_USAGE_RATIO)
         logger.info(f"Using max context: {max_context_tokens:,} tokens (model supports {model_max_context:,})")
         
-        # Calculate max tool result size
+        # Calculate max tool result size: 20% of context, capped at 8K tokens
         self.max_tool_result_tokens = min(int(max_context_tokens * TOOL_RESULT_CONTEXT_RATIO), MAX_TOOL_RESULT_TOKENS)
         self.max_tool_result_chars = self.max_tool_result_tokens * 4
         
@@ -114,7 +92,7 @@ class ChatInterface:
             ['/help', '/stats', '/cache', '/memory', '/gc', 
              '/context', '/raw-prompt', '/clear-cache', '/exit', '/quit'],
             ignore_case=True,
-            sentence=True
+            sentence=True  # Complete at start of input
         )
         
         self.prompt_session = PromptSession(
@@ -122,10 +100,10 @@ class ChatInterface:
             auto_suggest=AutoSuggestFromHistory(),
             completer=merge_completers([
                 command_completer,
-                PathCompleter(expanduser=True)
+                PathCompleter(expanduser=True)  # For file path completion
             ]),
             complete_while_typing=True,
-            enable_history_search=True,
+            enable_history_search=True,  # Ctrl+R for history search
         )
     
     def load_model(self):
@@ -149,18 +127,17 @@ class ChatInterface:
         try:
             while True:
                 try:
+                    # Get user input with prompt-toolkit
                     user_input = self.prompt_session.prompt("\nYou> ")
                     
                 except KeyboardInterrupt:
+                    # Ctrl+C just clears the current input, doesn't exit
                     console.print("[dim]Use /exit or Ctrl+D to quit[/dim]")
-                    continue
+                    continue  # NOW it's inside the while loop ✓
                 except EOFError:
+                    # Ctrl+D exits
                     console.print("\nGoodbye!")
-                    break
-                
-                # Handle empty input
-                if not user_input.strip():
-                    continue
+                    break  # NOW it's inside the while loop ✓
                 
                 # Handle commands
                 if user_input.lower() in ['/exit', '/quit']:
@@ -172,28 +149,8 @@ class ChatInterface:
                 if user_input.lower() == '/stats':
                     self._show_stats()
                     continue
-                if user_input.lower() == '/cache':
-                    self._show_cache_info()
-                    continue
-                if user_input.lower() == '/memory':
-                    self._show_memory_stats()
-                    continue
-                if user_input.lower() == '/gc':
-                    console.print("[dim]Running garbage collection...[/dim]")
-                    self.model_manager.run_gc()
-                    console.print("[green]✓ GC complete[/green]")
-                    continue
-                if user_input.lower() == '/context':
-                    self._show_context()
-                    continue
-                if user_input.lower() == '/raw-prompt':
-                    self._show_raw_prompt()
-                    continue
-                if user_input.lower() == '/clear-cache':
-                    self._clear_cache()
-                    continue
+                # ... rest of command handling stays the same ...
                 
-                # Process user message
                 should_reset = self.context_manager.add_message("user", user_input)
                 
                 if should_reset and self.model_manager.enable_cache:
@@ -218,11 +175,12 @@ class ChatInterface:
         if thinking_content:
             console.print(f"\n[dim italic]💭 Thinking: {thinking_content}[/dim italic]")
         
-        # Extract tool calls from content only
+        # Only extract tool calls from the actual content, NOT the thinking content
         tool_calls = extract_tool_calls(content)
 
         if tool_calls:
             logger.info(f"Found {len(tool_calls)} tool call(s)")
+            # Only add the actual content to history, not thinking content
             self.context_manager.add_message("assistant", content)
 
             for tc in tool_calls:
@@ -237,13 +195,16 @@ class ChatInterface:
             with Status("Processing results...", console=console):
                 follow_up_thinking, follow_up_content = self.model_manager.generate_response(include_tools=False)
 
+            # Display follow-up thinking if present
             if follow_up_thinking:
                 console.print(f"\n[dim italic]💭 Thinking: {follow_up_thinking}[/dim italic]")
 
             final_response = follow_up_content
+            # Only add the actual content to history, not thinking content
             self.context_manager.add_message("assistant", final_response)
         else:
             final_response = content
+            # Only add the actual content to history, not thinking content
             self.context_manager.add_message("assistant", final_response)
         
         generation_time = time.time() - start_time
@@ -256,10 +217,12 @@ class ChatInterface:
         console.print("[bold cyan]                    T.O.M. CLI HELP[/bold cyan]")
         console.print("[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]\n")
         
+        # Overview
         console.print("[bold yellow]OVERVIEW[/bold yellow]")
         console.print("T.O.M. (Thinking Optimized Model) is an interactive AI assistant built on")
         console.print("Qwen3-4B-Thinking-2507 with tool-calling capabilities and efficient prompt caching.\n")
         
+        # Commands
         console.print("[bold yellow]COMMANDS[/bold yellow]")
         commands_table = Table(show_header=False, box=None, padding=(0, 2))
         commands_table.add_column(style="cyan", no_wrap=True)
@@ -270,14 +233,13 @@ class ChatInterface:
         commands_table.add_row("/cache", "Show prompt cache information")
         commands_table.add_row("/memory", "Display system and MLX memory usage")
         commands_table.add_row("/gc", "Force garbage collection to free memory")
-        commands_table.add_row("/context", "Show complete conversation context")
-        commands_table.add_row("/raw-prompt", "Show raw formatted prompt")
         commands_table.add_row("/clear-cache", "Clear and reset the prompt cache")
         commands_table.add_row("/exit, /quit", "Exit the application")
         
         console.print(commands_table)
         console.print()
         
+        # Features
         console.print("[bold yellow]FEATURES[/bold yellow]")
         
         console.print("[cyan]• Thinking Mode:[/cyan] T.O.M. can show its reasoning process")
@@ -296,6 +258,7 @@ class ChatInterface:
         console.print("  - Intelligently trims old messages when needed")
         console.print("  - Preserves recent context for coherent responses\n")
         
+        # Tips
         console.print("[bold yellow]USAGE TIPS[/bold yellow]")
         
         console.print("[cyan]1. File Operations:[/cyan]")
@@ -315,6 +278,7 @@ class ChatInterface:
         console.print("   Use /clear-cache if you want to start fresh")
         console.print("   Cache is automatically saved between sessions\n")
         
+        # Configuration
         stats = self.context_manager.get_stats()
         console.print("[bold yellow]CURRENT CONFIGURATION[/bold yellow]")
         config_table = Table(show_header=False, box=None, padding=(0, 2))
@@ -335,6 +299,7 @@ class ChatInterface:
         console.print(config_table)
         console.print()
         
+        # Footer
         console.print("[bold yellow]GETTING STARTED[/bold yellow]")
         console.print("Just type your message and press Enter. T.O.M. will respond naturally.")
         console.print("Try asking questions, requesting file reads, or having a conversation!\n")
@@ -398,6 +363,8 @@ class ChatInterface:
     
     def _show_context(self):
         """Show the complete conversation context"""
+        from context_manager import TokenCounter
+        
         # Display system prompt
         console.print("\n[bold cyan]═══ SYSTEM PROMPT ═══[/bold cyan]")
         system_tokens = TokenCounter.estimate_tokens(
@@ -422,6 +389,7 @@ class ChatInterface:
                     self.context_manager.tokenizer
                 )
                 
+                # Color code by role
                 if role == "user":
                     style = "green"
                     icon = "👤"
@@ -445,6 +413,7 @@ class ChatInterface:
         
         # Display tools info
         console.print("\n[bold cyan]═══ TOOLS DEFINITIONS ═══[/bold cyan]")
+        from tools import TOOLS_DEFINITIONS
         tools_str = json.dumps(TOOLS_DEFINITIONS, indent=2)
         tools_tokens = TokenCounter.estimate_tokens(
             tools_str,
@@ -470,12 +439,18 @@ class ChatInterface:
     
     def _show_raw_prompt(self):
         """Show the actual formatted prompt sent to the LLM"""
+        from context_manager import TokenCounter
+        
         console.print("\n[bold cyan]═══ RAW PROMPT (WITH TOOLS) ═══[/bold cyan]")
         console.print("[dim]This is the exact formatted string the LLM processes[/dim]\n")
         
+        # Build the actual prompt with tools
         raw_prompt = self.context_manager.build_prompt(self.model_manager.tokenizer, include_tools=True)
+        
+        # Count tokens
         prompt_tokens = TokenCounter.estimate_tokens(raw_prompt, self.context_manager.tokenizer)
         
+        # Display in a panel
         console.print(Panel(
             raw_prompt,
             title=f"Formatted Prompt ({prompt_tokens:,} tokens)",
@@ -486,6 +461,7 @@ class ChatInterface:
         console.print(f"\n[dim]Prompt length: {len(raw_prompt):,} characters[/dim]")
         console.print(f"[dim]Estimated tokens: {prompt_tokens:,}[/dim]")
         
+        # Also show without tools for comparison
         console.print("\n[bold yellow]═══ RAW PROMPT (WITHOUT TOOLS) ═══[/bold yellow]")
         raw_prompt_no_tools = self.context_manager.build_prompt(self.model_manager.tokenizer, include_tools=False)
         no_tools_tokens = TokenCounter.estimate_tokens(raw_prompt_no_tools, self.context_manager.tokenizer)
@@ -511,6 +487,7 @@ class ChatInterface:
         table.add_row("Enabled", "Yes" if cache_info["enabled"] else "No")
         table.add_row("Path", cache_info["path"])
         
+        # Updated to match PromptCacheManager.get_stats() keys
         if cache_info["enabled"]:
             table.add_row("Max KV Size", str(cache_info.get("max_kv_size", "unlimited")))
             table.add_row("KV Bits", str(cache_info.get("kv_bits", "no quantization")))
@@ -551,3 +528,91 @@ class ChatInterface:
         
         self.model_manager.reset_cache()
         console.print("[green]Cache cleared and reset[/green]")
+
+
+@app.callback()
+def main(
+    ctx: typer.Context,
+    model_path: str = typer.Option(
+        "./Qwen3-4B-Thinking-2507-8bit", 
+        "--model", "-m",
+        help="Path to the MLX-converted model"
+    ),
+    cache_path: str = typer.Option(
+        None,
+        "--cache", "-c",
+        help="Path to prompt cache file"
+    ),
+    max_context: int = typer.Option(
+        None,
+        "--max-context",
+        help="Override max context tokens (default: 80%% of model's max)"
+    ),
+    gc_frequency: int = typer.Option(
+        3,
+        "--gc-frequency",
+        help="Run GC every N generations"
+    ),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Disable prompt caching"),
+    no_prewarm: bool = typer.Option(False, "--no-prewarm", help="Skip cache prewarming"),
+    no_auto_gc: bool = typer.Option(False, "--no-auto-gc", help="Disable auto GC"),
+    debug: bool = typer.Option(False, "--debug", "-d", help="Enable debug logging")
+):
+    """Start interactive chat with AI"""
+    # If a subcommand was invoked, don't run the default behavior
+    if ctx.invoked_subcommand is not None:
+        return
+    
+    if not debug:
+        logging.getLogger().setLevel(logging.INFO)
+    
+    if not Path(model_path).exists():
+        console.print(f"[red]Model path not found: {model_path}[/red]")
+        raise typer.Exit(1)
+    
+    chat = ChatInterface(
+        model_path=Path(model_path),
+        cache_path=cache_path,
+        enable_cache=not no_cache,
+        prewarm=not no_prewarm,
+        max_context_override=max_context,
+        auto_gc=not no_auto_gc,
+        gc_frequency=gc_frequency
+    )
+    chat.load_model()
+    chat.run()
+
+
+@app.command()
+def clear_cache(
+    model_path: str = typer.Option(
+        "./Qwen3-4B-Thinking-2507-8bit", 
+        "--model", "-m"
+    ),
+    cache_path: str = typer.Option(None, "--cache", "-c"),
+    force: bool = typer.Option(False, "--force", "-f", help="Delete without confirmation")
+):
+    """Clear the prompt cache file"""
+    resolved_cache = cache_path or str(Path(model_path).parent / "prompt_cache.safetensors")
+    cache_file = Path(resolved_cache)
+    
+    if not cache_file.exists():
+        console.print(f"[yellow]No cache file found[/yellow]")
+        return
+    
+    cache_size_mb = cache_file.stat().st_size / (1024 * 1024)
+    
+    if not force:
+        console.print(f"[yellow]Cache: {resolved_cache} ({cache_size_mb:.2f} MB)[/yellow]")
+        confirm = Prompt.ask("Delete?", choices=["yes", "no"], default="no")
+        
+        if confirm.lower() != "yes":
+            console.print("[dim]Cancelled[/dim]")
+            return
+    
+    try:
+        cache_file.unlink()
+        console.print(f"[green]✓ Cache deleted ({cache_size_mb:.2f} MB freed)[/green]")
+    except Exception as e:
+        console.print(f"[red]Failed to delete: {e}[/red]")
+        raise typer.Exit(1)

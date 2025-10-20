@@ -25,3 +25,8 @@ MAX_FILE_SIZE_MB = 10
 
 # System prompt
 DEFAULT_SYSTEM_PROMPT = "You are here."
+
+# Logging configuration
+LOG_LEVEL = "INFO"  # or "DEBUG", "WARNING", "ERROR"
+LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
