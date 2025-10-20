@@ -1,6 +1,6 @@
 # T.O.M. CLI
 
-**T**yper **O**rchestrated **M**odel - A production-ready agentic framework built on Qwen3-4B-Thinking-2507 with MLX optimization for Apple Silicon.
+**T**erminal **O**rchestrated **M**odel - A production-ready agentic framework built on Qwen3-4B-Thinking-2507 with MLX optimization for Apple Silicon.
 
 T.O.M. is an interactive AI assistant featuring intelligent prompt caching, tool-calling capabilities, and transparent reasoning processes. Built with modularity and performance in mind.
 
@@ -45,7 +45,6 @@ pip install -r requirements.txt
 
 **Key dependencies installed:**
 - `mlx` and `mlx-lm` - Apple's MLX framework for efficient ML on Apple Silicon
-- `typer` - Modern CLI framework with type hints
 - `rich` - Beautiful terminal output and formatting
 - `prompt_toolkit` - Advanced interactive prompt functionality
 - `psutil` - System and process utilities
@@ -201,7 +200,7 @@ You'll see this happen seamlessly in the conversation flow.
 
 #### `main.py`
 - Application entry point
-- Imports and launches the Typer CLI app
+- Imports and launches the CLI app
 
 #### `config.py`
 - Centralized configuration management
@@ -250,7 +249,7 @@ You'll see this happen seamlessly in the conversation flow.
 #### `cli.py`
 - User interface and interaction
 - `ChatInterface`: Main chat loop and state management
-- Typer app and command definitions
+- CLI app and command definitions
 - Rich console display methods with formatting
 - Interactive command handling
 - Response generation orchestration
@@ -642,7 +641,6 @@ This project demonstrates:
 ```
 mlx>=0.4.0
 mlx-lm>=0.4.0
-typer>=0.9.0
 rich>=13.0.0
 prompt-toolkit>=3.0.0
 psutil>=5.9.0

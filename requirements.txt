@@ -5,7 +5,6 @@ mlx
 mlx-lm
 
 # CLI framework
-typer
 prompt-toolkit
 
 # System/process monitoring
