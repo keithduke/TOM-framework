@@ -23,10 +23,9 @@ LOW_MEMORY_THRESHOLD_GB = 2.0
 # File reading limits
 MAX_FILE_SIZE_MB = 10
 
-# System prompt
-DEFAULT_SYSTEM_PROMPT = "You are here."
+# Streaming configuration
+ENABLE_STREAMING = True  # Set to False to use legacy non-streaming mode
+STREAM_FLUSH_INTERVAL = 0.01  # Seconds between flush operations (for smooth display)
 
-# Logging configuration
-LOG_LEVEL = "INFO"  # or "DEBUG", "WARNING", "ERROR"
-LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+# System prompt
+DEFAULT_SYSTEM_PROMPT = "You are."

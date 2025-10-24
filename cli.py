@@ -1,15 +1,16 @@
 """
-CLI interface for T.O.M.
+CLI interface for T.O.M. using prompt_toolkit with streaming support
 """
 
 import json
 import logging
 import os
+import re
+import sys
 import time
 from pathlib import Path
 
 import psutil
-import typer
 import mlx.core as mx
 from rich.console import Console
 from rich.logging import RichHandler
@@ -27,29 +28,53 @@ from config import (
     CONTEXT_USAGE_RATIO,
     TOOL_RESULT_CONTEXT_RATIO,
     MAX_TOOL_RESULT_TOKENS,
-    LOW_MEMORY_THRESHOLD_GB
+    LOW_MEMORY_THRESHOLD_GB,
+    ENABLE_STREAMING
 )
-from context_manager import ContextManager
+from context_manager import ContextManager, TokenCounter
 from model_manager import ModelManager
-from tools import execute_tool_call, extract_tool_calls, truncate_tool_result
+from tools import execute_tool_call, extract_tool_calls, truncate_tool_result, TOOLS_DEFINITIONS
 from utils import load_model_config
 
 # Initialize Rich console and logging
 console = Console()
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(message)s",
     datefmt="[%X]",
     handlers=[RichHandler(rich_tracebacks=True)]
 )
 logger = logging.getLogger("tom_cli")
 
-# CLI App
-app = typer.Typer(help="Interactive CLI for T.O.M.", invoke_without_command=True)
+
+def clear_cache_file(model_path: str, cache_path: str = None, force: bool = False):
+    """Utility function to clear cache file"""
+    resolved_cache = cache_path or str(Path(model_path).parent / "prompt_cache.safetensors")
+    cache_file = Path(resolved_cache)
+    
+    if not cache_file.exists():
+        console.print(f"[yellow]No cache file found[/yellow]")
+        return
+    
+    cache_size_mb = cache_file.stat().st_size / (1024 * 1024)
+    
+    if not force:
+        console.print(f"[yellow]Cache: {resolved_cache} ({cache_size_mb:.2f} MB)[/yellow]")
+        confirm = Prompt.ask("Delete?", choices=["yes", "no"], default="no")
+        
+        if confirm.lower() != "yes":
+            console.print("[dim]Cancelled[/dim]")
+            return
+    
+    try:
+        cache_file.unlink()
+        console.print(f"[green]âœ“ Cache deleted ({cache_size_mb:.2f} MB freed)[/green]")
+    except Exception as e:
+        console.print(f"[red]Failed to delete: {e}[/red]")
 
 
 class ChatInterface:
-    """Handles the interactive chat interface"""
+    """Handles the interactive chat interface with streaming support"""
     
     def __init__(
         self,
@@ -67,11 +92,11 @@ class ChatInterface:
         config = load_model_config(self.model_path)
         model_max_context = config.get("max_position_embeddings", 32768)
         
-        # Use override if provided, otherwise use 80% of model's max to leave headroom
+        # Use override if provided, otherwise use 80% of model's max
         max_context_tokens = max_context_override or int(model_max_context * CONTEXT_USAGE_RATIO)
         logger.info(f"Using max context: {max_context_tokens:,} tokens (model supports {model_max_context:,})")
         
-        # Calculate max tool result size: 20% of context, capped at 8K tokens
+        # Calculate max tool result size
         self.max_tool_result_tokens = min(int(max_context_tokens * TOOL_RESULT_CONTEXT_RATIO), MAX_TOOL_RESULT_TOKENS)
         self.max_tool_result_chars = self.max_tool_result_tokens * 4
         
@@ -92,7 +117,7 @@ class ChatInterface:
             ['/help', '/stats', '/cache', '/memory', '/gc', 
              '/context', '/raw-prompt', '/clear-cache', '/exit', '/quit'],
             ignore_case=True,
-            sentence=True  # Complete at start of input
+            sentence=True
         )
         
         self.prompt_session = PromptSession(
@@ -100,10 +125,10 @@ class ChatInterface:
             auto_suggest=AutoSuggestFromHistory(),
             completer=merge_completers([
                 command_completer,
-                PathCompleter(expanduser=True)  # For file path completion
+                PathCompleter(expanduser=True)
             ]),
             complete_while_typing=True,
-            enable_history_search=True,  # Ctrl+R for history search
+            enable_history_search=True,
         )
     
     def load_model(self):
@@ -114,30 +139,32 @@ class ChatInterface:
     def run(self):
         """Main interactive chat loop"""
         cache_status = "Caching enabled" if self.model_manager.enable_cache else "Caching disabled"
+        streaming_status = "Streaming enabled" if ENABLE_STREAMING else "Streaming disabled"
         console.print(Panel.fit(
             f"[bold blue]T.O.M. CLI[/bold blue]\n"
-            f"{cache_status}\n"
+            f"{cache_status} | {streaming_status}\n"
             f"Max context: {self.context_manager.max_context_tokens:,} tokens\n"
             f"Max tool result: {self.max_tool_result_chars:,} chars\n"
             "Commands: /stats, /cache, /memory, /gc, /context, /raw-prompt, /clear-cache, /exit\n"
-            "[dim]History: ↑/↓ arrows, Ctrl+R to search, Tab for completion[/dim]",
+            "[dim]History: â†‘/â†“ arrows, Ctrl+R to search, Tab for completion[/dim]",
             border_style="blue"
         ))
         
         try:
             while True:
                 try:
-                    # Get user input with prompt-toolkit
                     user_input = self.prompt_session.prompt("\nYou> ")
                     
                 except KeyboardInterrupt:
-                    # Ctrl+C just clears the current input, doesn't exit
                     console.print("[dim]Use /exit or Ctrl+D to quit[/dim]")
-                    continue  # NOW it's inside the while loop ✓
+                    continue
                 except EOFError:
-                    # Ctrl+D exits
                     console.print("\nGoodbye!")
-                    break  # NOW it's inside the while loop ✓
+                    break
+                
+                # Handle empty input
+                if not user_input.strip():
+                    continue
                 
                 # Handle commands
                 if user_input.lower() in ['/exit', '/quit']:
@@ -149,23 +176,207 @@ class ChatInterface:
                 if user_input.lower() == '/stats':
                     self._show_stats()
                     continue
-                # ... rest of command handling stays the same ...
+                if user_input.lower() == '/cache':
+                    self._show_cache_info()
+                    continue
+                if user_input.lower() == '/memory':
+                    self._show_memory_stats()
+                    continue
+                if user_input.lower() == '/gc':
+                    console.print("[dim]Running garbage collection...[/dim]")
+                    self.model_manager.run_gc()
+                    console.print("[green]âœ“ GC complete[/green]")
+                    continue
+                if user_input.lower() == '/context':
+                    self._show_context()
+                    continue
+                if user_input.lower() == '/raw-prompt':
+                    self._show_raw_prompt()
+                    continue
+                if user_input.lower() == '/clear-cache':
+                    self._clear_cache()
+                    continue
                 
+                # Process user message
                 should_reset = self.context_manager.add_message("user", user_input)
                 
                 if should_reset and self.model_manager.enable_cache:
                     logger.warning("Significant context trimming, resetting cache")
                     self.model_manager.reset_cache()
                 
-                self._generate_and_display_response()
+                # Generate and display response with streaming
+                if ENABLE_STREAMING:
+                    self._generate_and_display_response_streaming()
+                else:
+                    self._generate_and_display_response_legacy()
                 
         except KeyboardInterrupt:
             console.print("\nGoodbye!")
         except Exception as e:
             logger.error(f"Chat error: {e}", exc_info=True)
     
-    def _generate_and_display_response(self):
-        """Generate and display AI response with tool call processing"""
+    def _generate_and_display_response_streaming(self):
+        """Generate and display AI response with streaming and tool call detection"""
+        start_time = time.time()
+        
+        console.print()  # Newline before response
+        
+        # First pass: stream initial response with tool call detection
+        thinking_content, content_text, tool_calls = self._stream_with_tool_detection(include_tools=True)
+        
+        # Handle tool calls if any were detected
+        if tool_calls:
+            logger.info(f"Found {len(tool_calls)} tool call(s)")
+            
+            # Add the assistant message with tool calls
+            self.context_manager.add_message("assistant", content_text)
+            
+            # Execute each tool call
+            for tc in tool_calls:
+                try:
+                    result = execute_tool_call(tc)
+                    truncated_result = truncate_tool_result(result, tc["name"], self.max_tool_result_chars)
+                    self.context_manager.add_message("tool", truncated_result)
+                except Exception as e:
+                    logger.error(f"Error executing tool: {e}", exc_info=True)
+                    self.context_manager.add_message("tool", f"Tool error: {str(e)}")
+            
+            # Second pass: stream follow-up response after tool execution
+            # Add extra newline for spacing
+            print("\n")
+            follow_up_thinking, follow_up_content, _ = self._stream_with_tool_detection(include_tools=False)
+            
+            # Add follow-up to context
+            final_response = follow_up_content
+            print("\n", flush=True) # Add a newline
+            self.context_manager.add_message("assistant", final_response)
+        else:
+            # No tool calls, just add the response
+            final_response = content_text
+            print("\n", flush=True) # Add a newline
+            self.context_manager.add_message("assistant", final_response)
+        
+        generation_time = time.time() - start_time
+        console.print(f"[dim]{generation_time:.2f}s[/dim]")
+    
+    def _stream_with_tool_detection(self, include_tools: bool = False) -> tuple[str, str, list]:
+        """
+        Stream response and detect tool calls.
+        
+        Returns:
+            (thinking_content, content_text, tool_calls)
+        """
+        thinking_content = ""
+        content_text = ""
+        tool_calls = []
+        
+        # State management
+        displayed_thinking_header = False
+        displayed_content_header = False
+        in_tool_call = False
+        tool_call_buffer = ""
+        
+        # Stream the response
+        for chunk in self.model_manager.stream_response(include_tools=include_tools):
+            chunk_type = chunk.get('type')
+            
+            if chunk_type == 'thinking':
+                # Display thinking header once
+                if not displayed_thinking_header and chunk.get('delta'):
+                    console.print(f"[dim italic]ðŸ’­ Thinking:[/dim italic] ", end="")
+                    displayed_thinking_header = True
+                
+                # Stream thinking delta using standard print (not Rich Console)
+                delta = chunk.get('delta', '')
+                if delta:
+                    print(delta, end="", flush=True)
+                
+                # Update thinking content
+                if chunk.get('complete'):
+                    thinking_content = chunk.get('text', '')
+                    # Print newline after thinking completes
+                    if displayed_thinking_header:
+                        print()  # Newline after thinking
+            
+            elif chunk_type == 'content':
+                # Print content header once, only if we have actual content to display
+                if not displayed_content_header and chunk.get('delta'):
+                    console.print(f"\n[bold cyan]T.O.M.[/bold cyan]: ", end="")
+                    displayed_content_header = True
+                
+                delta = chunk.get('delta', '')
+                
+                # Skip empty deltas
+                if not delta:
+                    continue
+                
+                if not in_tool_call:
+                    # Check if we're starting a tool call
+                    if '<tool_call>' in delta:
+                        # We're entering a tool call
+                        parts = delta.split('<tool_call>', 1)
+                        
+                        # Print any content before the tool call tag
+                        if parts[0]:
+                            print(parts[0], end="", flush=True)
+                            content_text += parts[0]
+                        
+                        # Start buffering the tool call
+                        in_tool_call = True
+                        tool_call_buffer = parts[1] if len(parts) > 1 else ""
+                    else:
+                        # Normal content, just print it
+                        print(delta, end="", flush=True)
+                        content_text += delta
+                else:
+                    # We're inside a tool call, buffer it
+                    tool_call_buffer += delta
+                    
+                    # Check if we've completed the tool call
+                    if '</tool_call>' in tool_call_buffer:
+                        # Extract the complete tool call
+                        parts = tool_call_buffer.split('</tool_call>', 1)
+                        complete_call = parts[0]
+                        remaining = parts[1] if len(parts) > 1 else ""
+                        
+                        # Add the full tool_call to content (for context)
+                        tool_call_full = f"<tool_call>{complete_call}</tool_call>"
+                        content_text += tool_call_full
+                        
+                        # Parse the tool call
+                        parsed_calls = extract_tool_calls(tool_call_full)
+                        if parsed_calls:
+                            tool_calls.extend(parsed_calls)
+                            # Print indicator on same line if there's no content yet, or new line if there is
+                            if content_text.strip() == tool_call_full.strip():
+                                print("[ðŸ”§ Tool call detected]", end="", flush=True)
+                            else:
+                                print(" [ðŸ”§ Tool call detected]", end="", flush=True)
+                        
+                        # Reset state
+                        in_tool_call = False
+                        tool_call_buffer = ""
+                        
+                        # Print any remaining content after the tool call
+                        if remaining:
+                            print(remaining, end="", flush=True)
+                            content_text += remaining
+            
+            elif chunk_type == 'done':
+                # Final chunk
+                thinking_content = chunk.get('thinking', thinking_content)
+                content_text = chunk.get('content', content_text)
+                break
+            
+            elif chunk_type == 'error':
+                console.print(f"\n[red]Error: {chunk.get('text', 'Unknown error')}[/red]")
+                content_text = chunk.get('text', '')
+                break
+        
+        return thinking_content, content_text, tool_calls
+    
+    def _generate_and_display_response_legacy(self):
+        """Generate and display AI response (non-streaming fallback)"""
         start_time = time.time()
         
         with Status("Thinking...", console=console):
@@ -173,14 +384,13 @@ class ChatInterface:
         
         # Display thinking content if present
         if thinking_content:
-            console.print(f"\n[dim italic]💭 Thinking: {thinking_content}[/dim italic]")
+            console.print(f"\n[dim italic]ðŸ’­ Thinking: {thinking_content}[/dim italic]")
         
-        # Only extract tool calls from the actual content, NOT the thinking content
+        # Extract tool calls from content only
         tool_calls = extract_tool_calls(content)
 
         if tool_calls:
             logger.info(f"Found {len(tool_calls)} tool call(s)")
-            # Only add the actual content to history, not thinking content
             self.context_manager.add_message("assistant", content)
 
             for tc in tool_calls:
@@ -195,16 +405,13 @@ class ChatInterface:
             with Status("Processing results...", console=console):
                 follow_up_thinking, follow_up_content = self.model_manager.generate_response(include_tools=False)
 
-            # Display follow-up thinking if present
             if follow_up_thinking:
-                console.print(f"\n[dim italic]💭 Thinking: {follow_up_thinking}[/dim italic]")
+                console.print(f"\n[dim italic]ðŸ’­ Thinking: {follow_up_thinking}[/dim italic]")
 
             final_response = follow_up_content
-            # Only add the actual content to history, not thinking content
             self.context_manager.add_message("assistant", final_response)
         else:
             final_response = content
-            # Only add the actual content to history, not thinking content
             self.context_manager.add_message("assistant", final_response)
         
         generation_time = time.time() - start_time
@@ -213,16 +420,14 @@ class ChatInterface:
     
     def _show_help(self):
         """Display comprehensive help information"""
-        console.print("\n[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]")
+        console.print("\n[bold cyan]â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•[/bold cyan]")
         console.print("[bold cyan]                    T.O.M. CLI HELP[/bold cyan]")
-        console.print("[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]\n")
+        console.print("[bold cyan]â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•[/bold cyan]\n")
         
-        # Overview
         console.print("[bold yellow]OVERVIEW[/bold yellow]")
         console.print("T.O.M. (Thinking Optimized Model) is an interactive AI assistant built on")
         console.print("Qwen3-4B-Thinking-2507 with tool-calling capabilities and efficient prompt caching.\n")
         
-        # Commands
         console.print("[bold yellow]COMMANDS[/bold yellow]")
         commands_table = Table(show_header=False, box=None, padding=(0, 2))
         commands_table.add_column(style="cyan", no_wrap=True)
@@ -233,32 +438,35 @@ class ChatInterface:
         commands_table.add_row("/cache", "Show prompt cache information")
         commands_table.add_row("/memory", "Display system and MLX memory usage")
         commands_table.add_row("/gc", "Force garbage collection to free memory")
+        commands_table.add_row("/context", "Show complete conversation context")
+        commands_table.add_row("/raw-prompt", "Show raw formatted prompt")
         commands_table.add_row("/clear-cache", "Clear and reset the prompt cache")
         commands_table.add_row("/exit, /quit", "Exit the application")
         
         console.print(commands_table)
         console.print()
         
-        # Features
         console.print("[bold yellow]FEATURES[/bold yellow]")
         
-        console.print("[cyan]• Thinking Mode:[/cyan] T.O.M. can show its reasoning process")
-        console.print("  Look for 💭 Thinking messages to see how it approaches problems\n")
+        console.print("[cyan]â€¢ Streaming Mode:[/cyan] T.O.M. streams responses in real-time")
+        console.print("  Responses appear naturally as they're generated\n")
         
-        console.print("[cyan]• Tool Calling:[/cyan] Built-in tools that T.O.M. can use:")
+        console.print("[cyan]â€¢ Thinking Mode:[/cyan] T.O.M. can show its reasoning process")
+        console.print("  Look for ðŸ’­ Thinking messages to see how it approaches problems\n")
+        
+        console.print("[cyan]â€¢ Tool Calling:[/cyan] Built-in tools that T.O.M. can use:")
         console.print("  - get_datetime: Get current date and time")
         console.print("  - read: Read content from files on your system")
         console.print("  T.O.M. will automatically call tools when needed\n")
         
-        console.print("[cyan]• Prompt Caching:[/cyan] Speeds up responses by caching context")
+        console.print("[cyan]â€¢ Prompt Caching:[/cyan] Speeds up responses by caching context")
         console.print("  The cache is saved between sessions for faster startup\n")
         
-        console.print("[cyan]• Context Management:[/cyan] Automatically manages conversation history")
+        console.print("[cyan]â€¢ Context Management:[/cyan] Automatically manages conversation history")
         console.print("  - Keeps conversations within token limits")
         console.print("  - Intelligently trims old messages when needed")
         console.print("  - Preserves recent context for coherent responses\n")
         
-        # Tips
         console.print("[bold yellow]USAGE TIPS[/bold yellow]")
         
         console.print("[cyan]1. File Operations:[/cyan]")
@@ -278,7 +486,6 @@ class ChatInterface:
         console.print("   Use /clear-cache if you want to start fresh")
         console.print("   Cache is automatically saved between sessions\n")
         
-        # Configuration
         stats = self.context_manager.get_stats()
         console.print("[bold yellow]CURRENT CONFIGURATION[/bold yellow]")
         config_table = Table(show_header=False, box=None, padding=(0, 2))
@@ -289,6 +496,7 @@ class ChatInterface:
         config_table.add_row("Max Context:", f"{self.context_manager.max_context_tokens:,} tokens")
         config_table.add_row("Max Tool Result:", f"{self.max_tool_result_chars:,} characters")
         config_table.add_row("Caching:", "Enabled" if self.model_manager.enable_cache else "Disabled")
+        config_table.add_row("Streaming:", "Enabled" if ENABLE_STREAMING else "Disabled")
         config_table.add_row("Auto GC:", "Enabled" if self.model_manager.auto_gc else "Disabled")
         config_table.add_row("GC Frequency:", f"Every {self.model_manager.gc_frequency} generations")
         config_table.add_row("", "")
@@ -299,13 +507,12 @@ class ChatInterface:
         console.print(config_table)
         console.print()
         
-        # Footer
         console.print("[bold yellow]GETTING STARTED[/bold yellow]")
         console.print("Just type your message and press Enter. T.O.M. will respond naturally.")
         console.print("Try asking questions, requesting file reads, or having a conversation!\n")
         
         console.print("[dim]For more information, see the README.md in the project directory.[/dim]")
-        console.print("[bold cyan]═══════════════════════════════════════════════════════════════[/bold cyan]\n")
+        console.print("[bold cyan]â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•[/bold cyan]\n")
 
     def _show_stats(self):
         """Show context statistics"""
@@ -359,14 +566,12 @@ class ChatInterface:
         console.print(table)
         
         if sys_available_gb < LOW_MEMORY_THRESHOLD_GB:
-            console.print("[yellow]⚠ System memory is low![/yellow]")
+            console.print("[yellow]âš  System memory is low![/yellow]")
     
     def _show_context(self):
         """Show the complete conversation context"""
-        from context_manager import TokenCounter
-        
         # Display system prompt
-        console.print("\n[bold cyan]═══ SYSTEM PROMPT ═══[/bold cyan]")
+        console.print("\n[bold cyan]â•â•â• SYSTEM PROMPT â•â•â•[/bold cyan]")
         system_tokens = TokenCounter.estimate_tokens(
             self.context_manager.system_prompt, 
             self.context_manager.tokenizer
@@ -379,7 +584,7 @@ class ChatInterface:
         
         # Display conversation messages
         if self.context_manager.messages:
-            console.print("\n[bold cyan]═══ CONVERSATION HISTORY ═══[/bold cyan]")
+            console.print("\n[bold cyan]â•â•â• CONVERSATION HISTORY â•â•â•[/bold cyan]")
             
             for idx, msg in enumerate(self.context_manager.messages, 1):
                 role = msg["role"]
@@ -389,19 +594,18 @@ class ChatInterface:
                     self.context_manager.tokenizer
                 )
                 
-                # Color code by role
                 if role == "user":
                     style = "green"
-                    icon = "👤"
+                    icon = "ðŸ‘¤"
                 elif role == "assistant":
                     style = "blue"
-                    icon = "🤖"
+                    icon = "ðŸ¤–"
                 elif role == "tool":
                     style = "yellow"
-                    icon = "🔧"
+                    icon = "ðŸ”§"
                 else:
                     style = "white"
-                    icon = "•"
+                    icon = "â€¢"
                 
                 console.print(Panel(
                     content,
@@ -412,8 +616,7 @@ class ChatInterface:
             console.print("\n[dim]No messages in context yet[/dim]")
         
         # Display tools info
-        console.print("\n[bold cyan]═══ TOOLS DEFINITIONS ═══[/bold cyan]")
-        from tools import TOOLS_DEFINITIONS
+        console.print("\n[bold cyan]â•â•â• TOOLS DEFINITIONS â•â•â•[/bold cyan]")
         tools_str = json.dumps(TOOLS_DEFINITIONS, indent=2)
         tools_tokens = TokenCounter.estimate_tokens(
             tools_str,
@@ -424,7 +627,7 @@ class ChatInterface:
         
         # Display summary
         stats = self.context_manager.get_stats()
-        console.print("\n[bold cyan]═══ CONTEXT SUMMARY ═══[/bold cyan]")
+        console.print("\n[bold cyan]â•â•â• CONTEXT SUMMARY â•â•â•[/bold cyan]")
         table = Table(show_header=False, box=None)
         table.add_column("Metric", style="cyan")
         table.add_column("Value", style="green")
@@ -439,18 +642,12 @@ class ChatInterface:
     
     def _show_raw_prompt(self):
         """Show the actual formatted prompt sent to the LLM"""
-        from context_manager import TokenCounter
-        
-        console.print("\n[bold cyan]═══ RAW PROMPT (WITH TOOLS) ═══[/bold cyan]")
+        console.print("\n[bold cyan]â•â•â• RAW PROMPT (WITH TOOLS) â•â•â•[/bold cyan]")
         console.print("[dim]This is the exact formatted string the LLM processes[/dim]\n")
         
-        # Build the actual prompt with tools
         raw_prompt = self.context_manager.build_prompt(self.model_manager.tokenizer, include_tools=True)
-        
-        # Count tokens
         prompt_tokens = TokenCounter.estimate_tokens(raw_prompt, self.context_manager.tokenizer)
         
-        # Display in a panel
         console.print(Panel(
             raw_prompt,
             title=f"Formatted Prompt ({prompt_tokens:,} tokens)",
@@ -461,8 +658,7 @@ class ChatInterface:
         console.print(f"\n[dim]Prompt length: {len(raw_prompt):,} characters[/dim]")
         console.print(f"[dim]Estimated tokens: {prompt_tokens:,}[/dim]")
         
-        # Also show without tools for comparison
-        console.print("\n[bold yellow]═══ RAW PROMPT (WITHOUT TOOLS) ═══[/bold yellow]")
+        console.print("\n[bold yellow]â•â•â• RAW PROMPT (WITHOUT TOOLS) â•â•â•[/bold yellow]")
         raw_prompt_no_tools = self.context_manager.build_prompt(self.model_manager.tokenizer, include_tools=False)
         no_tools_tokens = TokenCounter.estimate_tokens(raw_prompt_no_tools, self.context_manager.tokenizer)
         
@@ -487,7 +683,6 @@ class ChatInterface:
         table.add_row("Enabled", "Yes" if cache_info["enabled"] else "No")
         table.add_row("Path", cache_info["path"])
         
-        # Updated to match PromptCacheManager.get_stats() keys
         if cache_info["enabled"]:
             table.add_row("Max KV Size", str(cache_info.get("max_kv_size", "unlimited")))
             table.add_row("KV Bits", str(cache_info.get("kv_bits", "no quantization")))
@@ -528,91 +723,3 @@ class ChatInterface:
         
         self.model_manager.reset_cache()
         console.print("[green]Cache cleared and reset[/green]")
-
-
-@app.callback()
-def main(
-    ctx: typer.Context,
-    model_path: str = typer.Option(
-        "./Qwen3-4B-Thinking-2507-8bit", 
-        "--model", "-m",
-        help="Path to the MLX-converted model"
-    ),
-    cache_path: str = typer.Option(
-        None,
-        "--cache", "-c",
-        help="Path to prompt cache file"
-    ),
-    max_context: int = typer.Option(
-        None,
-        "--max-context",
-        help="Override max context tokens (default: 80%% of model's max)"
-    ),
-    gc_frequency: int = typer.Option(
-        3,
-        "--gc-frequency",
-        help="Run GC every N generations"
-    ),
-    no_cache: bool = typer.Option(False, "--no-cache", help="Disable prompt caching"),
-    no_prewarm: bool = typer.Option(False, "--no-prewarm", help="Skip cache prewarming"),
-    no_auto_gc: bool = typer.Option(False, "--no-auto-gc", help="Disable auto GC"),
-    debug: bool = typer.Option(False, "--debug", "-d", help="Enable debug logging")
-):
-    """Start interactive chat with AI"""
-    # If a subcommand was invoked, don't run the default behavior
-    if ctx.invoked_subcommand is not None:
-        return
-    
-    if not debug:
-        logging.getLogger().setLevel(logging.INFO)
-    
-    if not Path(model_path).exists():
-        console.print(f"[red]Model path not found: {model_path}[/red]")
-        raise typer.Exit(1)
-    
-    chat = ChatInterface(
-        model_path=Path(model_path),
-        cache_path=cache_path,
-        enable_cache=not no_cache,
-        prewarm=not no_prewarm,
-        max_context_override=max_context,
-        auto_gc=not no_auto_gc,
-        gc_frequency=gc_frequency
-    )
-    chat.load_model()
-    chat.run()
-
-
-@app.command()
-def clear_cache(
-    model_path: str = typer.Option(
-        "./Qwen3-4B-Thinking-2507-8bit", 
-        "--model", "-m"
-    ),
-    cache_path: str = typer.Option(None, "--cache", "-c"),
-    force: bool = typer.Option(False, "--force", "-f", help="Delete without confirmation")
-):
-    """Clear the prompt cache file"""
-    resolved_cache = cache_path or str(Path(model_path).parent / "prompt_cache.safetensors")
-    cache_file = Path(resolved_cache)
-    
-    if not cache_file.exists():
-        console.print(f"[yellow]No cache file found[/yellow]")
-        return
-    
-    cache_size_mb = cache_file.stat().st_size / (1024 * 1024)
-    
-    if not force:
-        console.print(f"[yellow]Cache: {resolved_cache} ({cache_size_mb:.2f} MB)[/yellow]")
-        confirm = Prompt.ask("Delete?", choices=["yes", "no"], default="no")
-        
-        if confirm.lower() != "yes":
-            console.print("[dim]Cancelled[/dim]")
-            return
-    
-    try:
-        cache_file.unlink()
-        console.print(f"[green]✓ Cache deleted ({cache_size_mb:.2f} MB freed)[/green]")
-    except Exception as e:
-        console.print(f"[red]Failed to delete: {e}[/red]")
-        raise typer.Exit(1)

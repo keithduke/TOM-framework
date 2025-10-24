@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTextEdit, QLineEdit,
     QVBoxLayout, QWidget, QSystemTrayIcon, QMenu, QLabel, QHBoxLayout
 )
-from PySide6.QtGui import QIcon, QAction, QFont, QTextCursor, QPalette, QColor
+from PySide6.QtGui import QIcon, QAction, QFont, QTextCursor, QPalette, QColor, QTextOption
 from PySide6.QtCore import Qt, QProcess, Signal, QTimer, Slot
 
 
@@ -105,9 +105,6 @@ class TerminalWindow(QMainWindow):
         
         # Track if we've seen the initial prompt
         self.cli_ready = False
-        
-        # Buffer for incomplete lines
-        self.output_buffer = ""
     
     def _setup_ui(self):
         """Setup the UI components"""
@@ -143,8 +140,11 @@ class TerminalWindow(QMainWindow):
             }
         """)
         
-        # Disable word wrap to preserve formatting
-        self.output.setLineWrapMode(QTextEdit.NoWrap)
+        # ENABLE WORD WRAP - This is the key fix!
+        self.output.setLineWrapMode(QTextEdit.WidgetWidth)
+        
+        # Also enable word wrap at word boundaries for better readability
+        self.output.setWordWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
         
         layout.addWidget(self.output)
         
@@ -254,52 +254,51 @@ class TerminalWindow(QMainWindow):
             self._append_text("[Not connected to CLI process]\n", color="#f48771")
     
     def _handle_stdout(self):
-        """Handle standard output from CLI"""
+        """Handle standard output from CLI - optimized for smooth streaming"""
         data = self.process.readAllStandardOutput().data().decode('utf-8', errors='replace')
         
-        # Add to buffer
-        self.output_buffer += data
+        # For smooth streaming, process the data directly without line buffering
+        # This makes the output appear character-by-character like in the CLI
         
-        # Process complete lines
-        lines = self.output_buffer.split('\n')
+        # Strip ANSI codes from the incoming data
+        clean_data = self._strip_ansi(data)
         
-        # Keep the last incomplete line in buffer
-        self.output_buffer = lines[-1]
+        # Skip certain unwanted output
+        if "Warning: Input is not a terminal" in clean_data:
+            return
         
-        # Process complete lines
-        for line in lines[:-1]:
-            self._process_line(line + '\n')
-    
-    def _process_line(self, line):
-        """Process a single line of output"""
-        # Check if CLI is ready
-        if "You>" in line:
+        if "You>" in clean_data:
             self.cli_ready = True
-            return  # Skip the prompt echo
+            # Skip the prompt echo but keep any text after it
+            parts = clean_data.split("You>", 1)
+            if len(parts) > 1 and parts[1].strip():
+                clean_data = parts[1]
+            else:
+                return
         
-        # Strip ANSI codes
-        clean_line = self._strip_ansi(line)
+        # Detect coloring based on content
+        color = None
+        bold = False
+        italic = False
         
-        # Skip certain lines
-        if "Warning: Input is not a terminal" in clean_line:
-            return
-        if clean_line.strip() == "":
-            self._append_text("\n")
-            return
-        
-        # Detect log level and color accordingly
-        if "INFO" in clean_line:
-            self._append_text(clean_line, color="#6a9fb5")
-        elif "WARNING" in clean_line or "Warning" in clean_line:
-            self._append_text(clean_line, color="#ce9178")
-        elif "ERROR" in clean_line or "Error" in clean_line:
-            self._append_text(clean_line, color="#f48771")
-        elif "T.O.M." in clean_line:
-            self._append_text(clean_line, color="#4ec9b0", bold=True)
-        elif clean_line.startswith("💭"):
-            self._append_text(clean_line, color="#9cdcfe", italic=True)
+        # Simple heuristic coloring
+        if "INFO" in clean_data or "DEBUG" in clean_data:
+            color = "#6a9fb5"
+        elif "WARNING" in clean_data or "Warning" in clean_data:
+            color = "#ce9178"
+        elif "ERROR" in clean_data or "Error" in clean_data:
+            color = "#f48771"
+        elif "T.O.M." in clean_data:
+            color = "#4ec9b0"
+            bold = True
+        elif "💭" in clean_data or "Thinking:" in clean_data:
+            color = "#9cdcfe"
+            italic = True
         else:
-            self._append_text(clean_line, color="#d4d4d4")
+            color = "#d4d4d4"
+        
+        # Append directly for smooth streaming
+        self._append_text(clean_data, color=color, bold=bold, italic=italic)
     
     def _handle_stderr(self):
         """Handle standard error from CLI"""
@@ -323,12 +322,18 @@ class TerminalWindow(QMainWindow):
         return text
     
     def _append_text(self, text, color=None, bold=False, italic=False):
-        """Append text to output display with proper formatting"""
+        """Append text to output display with proper formatting - optimized for streaming"""
+        if not text:
+            return
+            
         cursor = self.output.textCursor()
         cursor.movePosition(QTextCursor.End)
         
-        # Build HTML for styled text
-        if color or bold or italic:
+        # For plain text (most common case), use faster text insertion
+        if not color and not bold and not italic:
+            cursor.insertText(text)
+        else:
+            # Build HTML for styled text
             style_parts = []
             if color:
                 style_parts.append(f"color: {color}")
@@ -342,23 +347,34 @@ class TerminalWindow(QMainWindow):
                 tags.append("i")
             
             html = text
+            
+            # Escape HTML special characters to prevent issues
+            html = html.replace('&', '&amp;')
+            html = html.replace('<', '&lt;')
+            html = html.replace('>', '&gt;')
+            
+            # Preserve spaces and newlines BEFORE wrapping in tags
+            html = html.replace(' ', '&nbsp;')  # Preserve spaces
+            html = html.replace('\n', '<br>')   # Convert newlines to breaks
+            
             for tag in tags:
                 html = f"<{tag}>{html}</{tag}>"
             
             if style:
                 html = f"<span style='{style}'>{html}</span>"
             
-            # Replace newlines with <br> for HTML
-            html = html.replace('\n', '<br>')
-            
             cursor.insertHtml(html)
-        else:
-            cursor.insertText(text)
         
-        # Auto-scroll to bottom
+        # Update cursor position
         self.output.setTextCursor(cursor)
+        
+        # Batch scroll updates to reduce jank
+        # Only scroll if we're already near the bottom
         scrollbar = self.output.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        at_bottom = scrollbar.value() >= scrollbar.maximum() - 10
+        
+        if at_bottom:
+            scrollbar.setValue(scrollbar.maximum())
     
     def closeEvent(self, event):
         """Handle window close"""
