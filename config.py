@@ -28,4 +28,4 @@ ENABLE_STREAMING = True  # Set to False to use legacy non-streaming mode
 STREAM_FLUSH_INTERVAL = 0.01  # Seconds between flush operations (for smooth display)
 
 # System prompt
-DEFAULT_SYSTEM_PROMPT = "You are."
+DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
