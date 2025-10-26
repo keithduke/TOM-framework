@@ -4,6 +4,8 @@ T.O.M. CLI - Interactive AI Assistant
 Entry point with argument parsing
 """
 
+import argparse
+import logging
 import sys
 from pathlib import Path
 from cli import ChatInterface, clear_cache_file
@@ -11,7 +13,6 @@ from cli import ChatInterface, clear_cache_file
 
 def main():
     """Parse arguments and start chat interface"""
-    import argparse
     
     parser = argparse.ArgumentParser(
         description="T.O.M. CLI - Interactive AI Assistant",
@@ -57,7 +58,6 @@ Examples:
     
     # Set logging
     if args.debug:
-        import logging
         logging.getLogger().setLevel(logging.DEBUG)
     
     # Validate model path
