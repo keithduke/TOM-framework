@@ -158,18 +158,29 @@ class ContextManager:
                     "tokenize": False,
                     "add_generation_prompt": True
                 }
-                
+
                 # Add tools if requested
                 if include_tools and TOOLS_DEFINITIONS:
                     kwargs["tools"] = TOOLS_DEFINITIONS
-                
+
                 prompt = tokenizer.apply_chat_template(chat_messages, **kwargs)
+
+                # CRITICAL FIX: Verify tools are actually present in the prompt
+                # Some chat templates accept 'tools' parameter but silently ignore it
+                if include_tools and TOOLS_DEFINITIONS:
+                    first_tool_name = TOOLS_DEFINITIONS[0]["function"]["name"]
+                    if first_tool_name not in prompt:
+                        logger.warning(
+                            f"Chat template ignored tools parameter (tools not in output), using fallback"
+                        )
+                        return self._build_fallback_prompt(chat_messages, include_tools)
+
                 logger.debug(f"Built prompt using chat template ({len(prompt)} chars)")
                 return prompt
-                
+
             except Exception as e:
                 logger.warning(f"Chat template failed: {e}, using fallback")
-        
+
         # Fallback prompt construction
         return self._build_fallback_prompt(chat_messages, include_tools)
     
