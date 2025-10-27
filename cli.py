@@ -246,7 +246,7 @@ class ChatInterface:
                     )
 
                     # Add tool result using 'tool' role (Qwen chat template expects this)
-                    tool_msg = f"Tool: {tc['name']}\nResult: {truncated}"
+                    tool_msg = f"<tool_result name=\"{tc['name']}\">{truncated}</tool_result>"
                     self.context_manager.add_message("tool", tool_msg)
 
                 except Exception as e:

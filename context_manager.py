@@ -1,5 +1,6 @@
 """
 Context management for T.O.M. CLI
+FIXED: Tool persistence across multi-turn conversations
 """
 
 import json
@@ -134,114 +135,46 @@ class ContextManager:
         total = system_tokens + message_tokens + tools_tokens
         return total
     
-    def build_prompt(self, tokenizer, include_tools: bool = False) -> str:
+    def build_prompt(self, tokenizer, include_tools=True) -> str:
         """
-        Build the complete prompt using chat template.
+        Build the complete prompt using chat template or fallback.
         
         Args:
             tokenizer: Model tokenizer
-            include_tools: Whether to include tool definitions
         
         Returns:
             Formatted prompt string ready for generation
         """
         # Build messages list with system prompt
         chat_messages = [{"role": "system", "content": self.system_prompt}]
-        
-        # Add conversation messages
         chat_messages.extend(self.messages)
         
-        # Try to use tokenizer's chat template
-        if hasattr(tokenizer, 'apply_chat_template') and tokenizer.chat_template is not None:
+        if hasattr(tokenizer, 'apply_chat_template') and tokenizer.chat_template is not None and TOOLS_DEFINITIONS:
             try:
-                kwargs = {
-                    "tokenize": False,
-                    "add_generation_prompt": True
-                }
-
-                # Add tools if requested
-                if include_tools and TOOLS_DEFINITIONS:
-                    kwargs["tools"] = TOOLS_DEFINITIONS
-
-                prompt = tokenizer.apply_chat_template(chat_messages, **kwargs)
-
-                # CRITICAL FIX: Verify tools are actually present in the prompt
-                # Some chat templates accept 'tools' parameter but silently ignore it
-                if include_tools and TOOLS_DEFINITIONS:
-                    first_tool_name = TOOLS_DEFINITIONS[0]["function"]["name"]
-                    if first_tool_name not in prompt:
-                        logger.warning(
-                            f"Chat template ignored tools parameter (tools not in output), using fallback"
-                        )
-                        return self._build_fallback_prompt(chat_messages, include_tools)
-
-                # CRITICAL FIX: Verify 'tool' role messages are present in prompt
-                # Some chat templates may drop tool responses, causing model to hallucinate
-                has_tool_messages = any(msg.get('role') in ('tool', 'function') for msg in chat_messages)
-                if has_tool_messages and '<tool_response>' not in prompt:
-                    logger.warning(
-                        f"Chat template dropped tool role messages, using fallback"
-                    )
-                    return self._build_fallback_prompt(chat_messages, include_tools)
-
+                prompt = tokenizer.apply_chat_template(
+                    chat_messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    tools=TOOLS_DEFINITIONS if TOOLS_DEFINITIONS else None
+                )
                 logger.debug(f"Built prompt using chat template ({len(prompt)} chars)")
                 return prompt
-
             except Exception as e:
                 logger.warning(f"Chat template failed: {e}, using fallback")
-
-        # Fallback prompt construction
-        return self._build_fallback_prompt(chat_messages, include_tools)
-    
-    def _build_fallback_prompt(self, chat_messages: List[Dict[str, str]], include_tools: bool) -> str:
-        """
-        Fallback prompt builder when chat template unavailable.
-        Simple but functional format.
-        """
-        parts = []
         
-        # Add system prompt
-        if chat_messages and chat_messages[0]["role"] == "system":
-            parts.append(f"System: {chat_messages[0]['content']}\n")
-            chat_messages = chat_messages[1:]
-        
-        # Add tools if requested
-        if include_tools and TOOLS_DEFINITIONS:
-            tools_str = json.dumps(TOOLS_DEFINITIONS, indent=2)
-            parts.append(f"Available Tools:\n{tools_str}\n")
-        
-        # Add conversation
-        for msg in chat_messages:
-            role = msg["role"]
-            content = msg["content"]
-            
-            if role == "user":
-                parts.append(f"User: {content}")
-            elif role == "assistant":
-                parts.append(f"Assistant: {content}")
-            elif role == "tool":
-                # Mimic Qwen template: wrap in <tool_response> and present as user message
-                parts.append(f"User:\n<tool_response>\n{content}\n</tool_response>")
-            elif role == "function":
-                # Backward compatibility: assume already wrapped
-                parts.append(f"User:\n{content}")
-        
-        # Add generation prompt
-        parts.append("Assistant:")
-        
-        return "\n\n".join(parts)
-    
     def get_stats(self) -> Dict[str, any]:
         """Get context statistics for monitoring"""
         total_tokens = self._count_total_tokens()
         msg_count = len(self.messages)
         
-        return {
+        stats = {
             "message_count": msg_count,
             "total_tokens": total_tokens,
             "max_tokens": self.max_context_tokens,
             "usage_percent": (total_tokens / self.max_context_tokens) * 100
         }
+        
+        return stats
     
     def clear_messages(self):
         """Clear all messages while keeping system prompt"""
