@@ -175,6 +175,15 @@ class ContextManager:
                         )
                         return self._build_fallback_prompt(chat_messages, include_tools)
 
+                # CRITICAL FIX: Verify 'function' role messages are present in prompt
+                # Qwen chat template may not support 'function' role, causing tool responses to be dropped
+                has_function_messages = any(msg.get('role') == 'function' for msg in chat_messages)
+                if has_function_messages and '<tool_response>' not in prompt:
+                    logger.warning(
+                        f"Chat template dropped function role messages, using fallback"
+                    )
+                    return self._build_fallback_prompt(chat_messages, include_tools)
+
                 logger.debug(f"Built prompt using chat template ({len(prompt)} chars)")
                 return prompt
 
