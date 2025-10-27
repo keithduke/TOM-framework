@@ -78,7 +78,7 @@ class ContextManager:
             True if significant trimming occurred (>25% of messages removed)
         """
         # Validate role
-        valid_roles = {"user", "assistant", "tool", "system"}
+        valid_roles = {"user", "assistant", "tool", "function", "system"}
         if role not in valid_roles:
             logger.warning(f"Invalid message role: {role}")
             return False
@@ -212,6 +212,8 @@ class ContextManager:
                 parts.append(f"Assistant: {content}")
             elif role == "tool":
                 parts.append(f"Tool Result: {content}")
+            elif role == "function":
+                parts.append(content)  # Already wrapped in <tool_response> tags
         
         # Add generation prompt
         parts.append("Assistant:")

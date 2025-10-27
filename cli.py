@@ -230,30 +230,29 @@ class ChatInterface:
         
         if tool_calls:
             logger.info(f"Detected {len(tool_calls)} tool call(s)")
-            
-            # CRITICAL FIX: Strip tool call XML from content before adding to context
-            clean_content = strip_tool_calls(content)
-            logger.info(f"Adding assistant message to context: '{clean_content}' (original had {len(content)} chars)")
-            self.context_manager.add_message("assistant", clean_content)
+
+            # Keep tool_call XML in assistant message for proper context
+            logger.info(f"Adding assistant message with tool calls to context ({len(content)} chars)")
+            self.context_manager.add_message("assistant", content)
             
             # Execute tools and add results
             for tc in tool_calls:
                 try:
                     result = execute_tool_call(tc)
                     truncated = truncate_tool_result(
-                        result, 
-                        tc["name"], 
+                        result,
+                        tc["name"],
                         self.max_tool_result_chars
                     )
-                    
-                    # Add tool result with clear formatting
-                    tool_msg = f"Tool: {tc['name']}\nResult: {truncated}"
-                    self.context_manager.add_message("tool", tool_msg)
-                    
+
+                    # Add tool result using 'function' role (Qwen standard)
+                    tool_msg = f"<tool_response>\nTool: {tc['name']}\nResult: {truncated}\n</tool_response>"
+                    self.context_manager.add_message("function", tool_msg)
+
                 except Exception as e:
                     logger.error(f"Tool error: {e}", exc_info=True)
-                    error_msg = f"Tool: {tc['name']}\nError: {str(e)}"
-                    self.context_manager.add_message("tool", error_msg)
+                    error_msg = f"<tool_response>\nTool: {tc['name']}\nError: {str(e)}\n</tool_response>"
+                    self.context_manager.add_message("function", error_msg)
             
             # Second generation without tools
             print("\n")  # Spacing
@@ -342,10 +341,9 @@ class ChatInterface:
         
         if tool_calls:
             logger.info(f"Detected {len(tool_calls)} tool call(s)")
-            
-            # Strip tool XML and add to context
-            clean_content = strip_tool_calls(content)
-            self.context_manager.add_message("assistant", clean_content)
+
+            # Keep tool_call XML in assistant message for proper context
+            self.context_manager.add_message("assistant", content)
             
             # Execute tools
             for tc in tool_calls:
@@ -356,12 +354,12 @@ class ChatInterface:
                         tc["name"],
                         self.max_tool_result_chars
                     )
-                    tool_msg = f"Tool: {tc['name']}\nResult: {truncated}"
-                    self.context_manager.add_message("tool", tool_msg)
+                    tool_msg = f"<tool_response>\nTool: {tc['name']}\nResult: {truncated}\n</tool_response>"
+                    self.context_manager.add_message("function", tool_msg)
                 except Exception as e:
                     logger.error(f"Tool error: {e}", exc_info=True)
-                    error_msg = f"Tool: {tc['name']}\nError: {str(e)}"
-                    self.context_manager.add_message("tool", error_msg)
+                    error_msg = f"<tool_response>\nTool: {tc['name']}\nError: {str(e)}\n</tool_response>"
+                    self.context_manager.add_message("function", error_msg)
             
             # Follow-up generation
             with Status("Processing results...", console=console):
