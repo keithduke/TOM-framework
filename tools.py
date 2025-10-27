@@ -19,6 +19,9 @@ logger = logging.getLogger("tom_cli")
 TOOLS_REGISTRY: Dict[str, Callable] = {}
 TOOLS_DEFINITIONS: List[Dict[str, Any]] = []
 
+# Character limit for file reading - files larger than this will be rejected
+MAX_FILE_CHARS = 15000  # ~3,750 tokens at 4 chars/token
+
 
 def tool(name: str, description: str, parameters: Dict[str, Any] = None):
     """Decorator to register tools with optional parameters"""
@@ -49,62 +52,9 @@ def get_datetime() -> str:
     return formatted
 
 
-def summarize_code_file(content: str, filename: str) -> str:
-    """
-    Create structure summary of code files to prevent context overload.
-    Shows imports, classes, functions - not full content.
-    """
-    lines = content.split('\n')
-    total_lines = len(lines)
-    
-    # Small files don't need summarization
-    if total_lines <= 200:
-        return content
-    
-    summary_parts = []
-    summary_parts.append(f"# FILE: {filename} ({total_lines:,} lines, {len(content):,} chars)")
-    summary_parts.append(f"# Showing structure only - use full=true parameter to see complete code\n")
-    
-    in_docstring = False
-    docstring_char = None
-    
-    for i, line in enumerate(lines, 1):
-        stripped = line.strip()
-        
-        if not stripped:
-            continue
-        
-        # Track docstrings
-        if '"""' in line or "'''" in line:
-            if not in_docstring:
-                in_docstring = True
-                docstring_char = '"""' if '"""' in line else "'''"
-                if line.count(docstring_char) >= 2:
-                    in_docstring = False
-            elif docstring_char in line:
-                in_docstring = False
-            continue
-        
-        if in_docstring:
-            continue
-        
-        # Include structural lines
-        if (stripped.startswith(('import ', 'from ')) or
-            stripped.startswith('class ') or
-            stripped.startswith('def ') or
-            stripped.startswith('@') or
-            (stripped.startswith('#') and len(line) - len(line.lstrip()) == 0)):
-            summary_parts.append(f"{i:4d}: {line.rstrip()}")
-    
-    summary = '\n'.join(summary_parts)
-    summary += f"\n\n# Structure: {len(summary_parts)-2} key lines from {total_lines:,} total"
-    
-    return summary
-
-
 @tool(
     "read", 
-    "Read file content. Returns structure summary for large code files to keep context manageable.",
+    "Read file content. Returns full file content or error if file is too large.",
     parameters={
         "type": "object",
         "properties": {
@@ -113,11 +63,10 @@ def summarize_code_file(content: str, filename: str) -> str:
         "required": ["location"]
     }
 )
-def read_file(location: str, full: bool = False) -> str:
+def read_file(location: str) -> str:
     """
-    Read file with intelligent summarization for large code files.
-    Note: full parameter only honored for non-code files or when called internally.
-    The model should always receive summaries for large code files.
+    Read file and return complete contents.
+    Returns error message if file exceeds size limits - NO TRUNCATION.
     """
     try:
         file_path = Path(location).expanduser().resolve()
@@ -129,23 +78,25 @@ def read_file(location: str, full: bool = False) -> str:
         
         file_size_mb = file_path.stat().st_size / (1024 * 1024)
         if file_size_mb > MAX_FILE_SIZE_MB:
-            return f"Error: File too large ({file_size_mb:.2f} MB). Max: {MAX_FILE_SIZE_MB} MB."
+            return f"Error: File too large ({file_size_mb:.2f} MB). Maximum allowed: {MAX_FILE_SIZE_MB} MB."
         
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
-        logger.info(f"Read {location}: {len(content):,} chars ({file_size_mb:.2f} MB)")
+        # Check character limit
+        char_count = len(content)
+        if char_count > MAX_FILE_CHARS:
+            line_count = content.count('\n') + 1
+            return (
+                f"Error: File too large to read.\n"
+                f"File: {file_path.name}\n"
+                f"Size: {char_count:,} characters ({line_count:,} lines)\n"
+                f"Limit: {MAX_FILE_CHARS:,} characters\n\n"
+                f"File is {char_count - MAX_FILE_CHARS:,} characters over the limit.\n"
+                f"Consider reading specific sections or breaking the analysis into parts."
+            )
         
-        # Auto-summarize large code files
-        code_ext = {'.py', '.js', '.java', '.cpp', '.c', '.h', '.rs', '.go', '.ts', '.jsx', '.tsx'}
-        is_code = file_path.suffix.lower() in code_ext
-        
-        # ALWAYS summarize large code files - don't let model override with full=true
-        if is_code and len(content) > 5000:
-            summary = summarize_code_file(content, file_path.name)
-            logger.info(f"Summarized to {len(summary):,} chars (ignoring full={full})")
-            return summary
-        
+        logger.info(f"Read {location}: {char_count:,} chars ({file_size_mb:.2f} MB)")
         return content
         
     except UnicodeDecodeError:
@@ -265,27 +216,7 @@ def strip_tool_calls(text: str) -> str:
 
 def truncate_tool_result(result: str, tool_name: str, max_chars: int) -> str:
     """
-    Intelligently truncate large tool results.
-    Shows beginning and end with truncation notice in middle.
+    DEPRECATED: No-op function kept for backward compatibility.
+    Returns result unchanged.
     """
-    if len(result) <= max_chars:
-        return result
-    
-    truncated_chars = len(result) - max_chars
-    
-    # For very large results, show more from beginning
-    if len(result) > max_chars * 3:
-        start_size = int(max_chars * 0.7)
-        end_size = max_chars - start_size
-    else:
-        start_size = max_chars // 2
-        end_size = max_chars - start_size
-    
-    truncated = (
-        result[:start_size] + 
-        f"\n\n... [TRUNCATED {truncated_chars:,} characters - {(truncated_chars/len(result)*100):.1f}% of content] ...\n\n" +
-        result[-end_size:]
-    )
-    
-    logger.warning(f"Truncated {tool_name} result: {len(result):,} -> {len(truncated):,} chars")
-    return truncated
+    return result

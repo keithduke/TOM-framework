@@ -233,6 +233,7 @@ class ChatInterface:
             
             # CRITICAL FIX: Strip tool call XML from content before adding to context
             clean_content = strip_tool_calls(content)
+            logger.info(f"Adding assistant message to context: '{clean_content}' (original had {len(content)} chars)")
             self.context_manager.add_message("assistant", clean_content)
             
             # Execute tools and add results
