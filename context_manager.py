@@ -175,6 +175,15 @@ class ContextManager:
                         )
                         return self._build_fallback_prompt(chat_messages, include_tools)
 
+                # CRITICAL FIX: Verify 'tool' role messages are present in prompt
+                # Some chat templates may drop tool responses, causing model to hallucinate
+                has_tool_messages = any(msg.get('role') in ('tool', 'function') for msg in chat_messages)
+                if has_tool_messages and '<tool_response>' not in prompt:
+                    logger.warning(
+                        f"Chat template dropped tool role messages, using fallback"
+                    )
+                    return self._build_fallback_prompt(chat_messages, include_tools)
+
                 logger.debug(f"Built prompt using chat template ({len(prompt)} chars)")
                 return prompt
 
@@ -211,9 +220,11 @@ class ContextManager:
             elif role == "assistant":
                 parts.append(f"Assistant: {content}")
             elif role == "tool":
-                parts.append(f"Tool Result: {content}")
+                # Mimic Qwen template: wrap in <tool_response> and present as user message
+                parts.append(f"User:\n<tool_response>\n{content}\n</tool_response>")
             elif role == "function":
-                parts.append(content)  # Already wrapped in <tool_response> tags
+                # Backward compatibility: assume already wrapped
+                parts.append(f"User:\n{content}")
         
         # Add generation prompt
         parts.append("Assistant:")

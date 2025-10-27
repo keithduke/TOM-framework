@@ -245,15 +245,15 @@ class ChatInterface:
                         self.max_tool_result_chars
                     )
 
-                    # Add tool result using 'function' role (Qwen standard)
-                    tool_msg = f"<tool_response>\nTool: {tc['name']}\nResult: {truncated}\n</tool_response>"
-                    self.context_manager.add_message("function", tool_msg)
+                    # Add tool result using 'tool' role (Qwen chat template expects this)
+                    tool_msg = f"Tool: {tc['name']}\nResult: {truncated}"
+                    self.context_manager.add_message("tool", tool_msg)
 
                 except Exception as e:
                     logger.error(f"Tool error: {e}", exc_info=True)
-                    error_msg = f"<tool_response>\nTool: {tc['name']}\nError: {str(e)}\n</tool_response>"
-                    self.context_manager.add_message("function", error_msg)
-            
+                    error_msg = f"Tool: {tc['name']}\nError: {str(e)}"
+                    self.context_manager.add_message("tool", error_msg)
+
             # Second generation without tools
             print("\n")  # Spacing
             follow_thinking, follow_content, _ = self._stream_and_parse(include_tools=False)
@@ -354,12 +354,12 @@ class ChatInterface:
                         tc["name"],
                         self.max_tool_result_chars
                     )
-                    tool_msg = f"<tool_response>\nTool: {tc['name']}\nResult: {truncated}\n</tool_response>"
-                    self.context_manager.add_message("function", tool_msg)
+                    tool_msg = f"Tool: {tc['name']}\nResult: {truncated}"
+                    self.context_manager.add_message("tool", tool_msg)
                 except Exception as e:
                     logger.error(f"Tool error: {e}", exc_info=True)
-                    error_msg = f"<tool_response>\nTool: {tc['name']}\nError: {str(e)}\n</tool_response>"
-                    self.context_manager.add_message("function", error_msg)
+                    error_msg = f"Tool: {tc['name']}\nError: {str(e)}"
+                    self.context_manager.add_message("tool", error_msg)
             
             # Follow-up generation
             with Status("Processing results...", console=console):
