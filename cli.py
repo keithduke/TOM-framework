@@ -254,9 +254,9 @@ class ChatInterface:
                     error_msg = f"Tool: {tc['name']}\nError: {str(e)}"
                     self.context_manager.add_message("tool", error_msg)
 
-            # Second generation without tools
+            # Second generation to synthesize results
             print("\n")  # Spacing
-            follow_thinking, follow_content, _ = self._stream_and_parse(include_tools=False)
+            follow_thinking, follow_content, _ = self._stream_and_parse(include_tools=True)
             
             # Add final response
             print("\n")
