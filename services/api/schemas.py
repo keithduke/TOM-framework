@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 ALLOWED_ROLES = {"user", "assistant", "tool", "function", "system"}
 
@@ -22,7 +22,8 @@ class MessagePayload(BaseModel):
     role: str
     content: str
 
-    @validator("role")
+    @field_validator("role")
+    @classmethod
     def validate_role(cls, value: str) -> str:
         if value not in ALLOWED_ROLES:
             raise ValueError(f"Invalid role '{value}'")
@@ -36,6 +37,7 @@ class MessageRequest(BaseModel):
 class SessionState(BaseModel):
     session_id: str
     system_prompt: str
+    max_context_tokens: int
     messages: List[MessagePayload]
 
 

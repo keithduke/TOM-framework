@@ -5,10 +5,13 @@ Wraps CLI in dedicated window with system tray
 FIXED: Output filtering and color support
 """
 
+import os
 import sys
-import re
 import signal
 from pathlib import Path
+from typing import Optional
+
+import httpx
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTextEdit, QLineEdit,
@@ -18,7 +21,29 @@ from PySide6.QtGui import (
     QIcon, QAction, QFont, QTextCursor, QTextCharFormat, 
     QColor, QTextOption
 )
-from PySide6.QtCore import Qt, QProcess, Signal, QTimer, Slot
+from PySide6.QtCore import Qt, Signal, Slot, QTimer, QThreadPool, QRunnable, QObject
+
+
+class WorkerSignals(QObject):
+    success = Signal(object)
+    error = Signal(str)
+
+
+class ApiWorker(QRunnable):
+    def __init__(self, fn, *args, **kwargs):
+        super().__init__()
+        self.fn = fn
+        self.args = args
+        self.kwargs = kwargs
+        self.signals = WorkerSignals()
+
+    def run(self):
+        try:
+            result = self.fn(*self.args, **self.kwargs)
+        except Exception as exc:
+            self.signals.error.emit(str(exc))
+        else:
+            self.signals.success.emit(result)
 
 
 class TrayIcon(QSystemTrayIcon):
@@ -79,7 +104,7 @@ class StatusBar(QWidget):
 
 
 class TerminalWindow(QMainWindow):
-    """Main window hosting CLI process"""
+    """Main window hosting API-driven assistant"""
     
     quit_requested = Signal()
     
@@ -89,11 +114,16 @@ class TerminalWindow(QMainWindow):
         self.setGeometry(100, 100, 900, 700)
         self.setMinimumSize(600, 400)
         
+        self.api_base = os.getenv("TOM_API_BASE", "http://127.0.0.1:8000")
+        self.api_key = os.getenv("TOM_API_KEY")
+        self.client: Optional[httpx.Client] = None
+        self.session_id: Optional[str] = None
+        self.thread_pool = QThreadPool.globalInstance()
+        self.pending_request = False
+        
         self._setup_ui()
         self._setup_colors()
-        self._start_cli_process()
-        
-        self.cli_ready = False
+        self._connect_api()
     
     def _setup_ui(self):
         """Setup UI components"""
@@ -184,46 +214,27 @@ class TerminalWindow(QMainWindow):
             fmt.setFontItalic(True)
         return fmt
     
-    def _start_cli_process(self):
-        """Start CLI as subprocess"""
-        self.process = QProcess()
-        self.process.readyReadStandardOutput.connect(self._handle_stdout)
-        self.process.readyReadStandardError.connect(self._handle_stderr)
-        self.process.started.connect(self._on_process_started)
-        self.process.finished.connect(self._on_process_finished)
-        
-        cli_script = Path(__file__).resolve().parents[2] / "main.py"
-        
-        if not cli_script.exists():
-            self._append_text(f"Error: CLI not found at {cli_script}\n", 'error')
-            self.status_bar.set_status("CLI not found", "#f48771")
-            return
-        
-        # Set environment
-        env = QProcess.systemEnvironment()
-        env.append("PYTHONUNBUFFERED=1")
-        env.append("TERM=xterm-256color")
-        self.process.setEnvironment(env)
-        
-        self.process.start(sys.executable, [str(cli_script)])
-    
-    def _on_process_started(self):
-        """Called when CLI starts"""
-        self.status_bar.set_status("Connected", "#4ec9b0")
-        self._append_text("═" * 60 + "\n", 'info')
-        self._append_text("       T.O.M. Assistant - GUI Edition\n", 'info')
-        self._append_text("═" * 60 + "\n\n", 'info')
-    
-    def _on_process_finished(self, exit_code, exit_status):
-        """Called when CLI exits"""
-        self.status_bar.set_status("Disconnected", "#888")
-        self._append_text(f"\n[Process exited with code {exit_code}]\n", 'dim')
-        self.cli_ready = False
+    def _connect_api(self):
+        """Initialize HTTP client and session."""
+        headers = {"X-TOM-API-Key": self.api_key} if self.api_key else None
+        self.client = httpx.Client(base_url=self.api_base, timeout=60.0, headers=headers)
+        self.status_bar.set_status("Connecting...", "#ffc107")
+        self._append_text(f"Connecting to API at {self.api_base}\n", 'info')
+        try:
+            resp = self.client.post("/sessions", json={}, timeout=30)
+            resp.raise_for_status()
+            session = resp.json()
+            self.session_id = session["session_id"]
+            self.status_bar.set_status("Connected", "#4ec9b0")
+            self._append_text("Connected to T.O.M. API\n", 'info')
+        except httpx.HTTPError as exc:
+            self.status_bar.set_status("API error", "#f48771")
+            self._append_text(f"Failed to connect: {exc}\n", 'error')
     
     def _send_input(self):
-        """Send input to CLI"""
+        """Send input to API"""
         text = self.input_field.text().strip()
-        if not text:
+        if not text or self.pending_request:
             return
         
         # Handle quit
@@ -237,75 +248,54 @@ class TerminalWindow(QMainWindow):
         # Echo input
         self._append_text(f"\nYou> {text}\n", 'user')
         
-        # Send to process
-        if self.process.state() == QProcess.Running:
-            self.process.write((text + "\n").encode('utf-8'))
-        else:
-            self._append_text("[Not connected]\n", 'error')
-    
-    def _handle_stdout(self):
-        """Handle stdout - FIXED to not drop output"""
-        data = self.process.readAllStandardOutput().data().decode('utf-8', errors='replace')
-        
-        # Strip ANSI codes
-        clean = self._strip_ansi(data)
-        
-        # Skip terminal warnings
-        if "Warning: Input is not a terminal" in clean or "not a terminal" in clean:
+        if not self.client or not self.session_id:
+            self._append_text("[API not connected]\n", 'error')
             return
         
-        # Skip echo of "You>" prompts, but NOT the content after them
-        if "You>" in clean:
-            self.cli_ready = True
-            # Only skip the prompt itself, keep everything else
-            parts = clean.split("You>")
-            # If there's content after "You>", keep it
-            if len(parts) > 1:
-                for i, part in enumerate(parts[1:], 1):
-                    if part.strip():
-                        clean = part
-                        break
-                else:
-                    return  # Empty after prompt
-            else:
-                return  # Just the prompt
+        self.pending_request = True
+        self.input_field.setEnabled(False)
+        self.status_bar.set_status("Waiting...", "#ffc107")
         
-        if not clean.strip():
-            return
-        
-        # Detect format based on content
-        fmt = 'default'
-        
-        if "💭" in clean or "Thinking:" in clean:
-            fmt = 'thinking'
-        elif "T.O.M." in clean:
-            fmt = 'assistant'
-        elif "🔧" in clean or "Tool" in clean:
-            fmt = 'tool'
-        elif "ERROR" in clean or "Error" in clean:
-            fmt = 'error'
-        elif "INFO" in clean or "DEBUG" in clean:
-            fmt = 'info'
-        
-        self._append_text(clean, fmt)
+        worker = ApiWorker(self._chat_with_api, text)
+        worker.signals.success.connect(self._handle_chat_success)
+        worker.signals.error.connect(self._handle_chat_error)
+        self.thread_pool.start(worker)
     
-    def _handle_stderr(self):
-        """Handle stderr"""
-        data = self.process.readAllStandardError().data().decode('utf-8', errors='replace')
-        clean = self._strip_ansi(data)
-        
-        if "Warning: Input is not a terminal" not in clean and clean.strip():
-            self._append_text(clean, 'error')
+    def _chat_with_api(self, text: str):
+        assert self.client and self.session_id
+        payload = {"content": text, "run_tools": True}
+        resp = self.client.post(f"/sessions/{self.session_id}/chat", json=payload, timeout=None)
+        resp.raise_for_status()
+        return resp.json()
     
-    def _strip_ansi(self, text):
-        """Remove ANSI escape codes"""
-        # Remove color codes
-        text = re.sub(r'\x1b\[[0-9;]*[mGKHF]', '', text)
-        # Remove OSC sequences
-        text = re.sub(r'\x1b\].*?\x07', '', text)
-        # Remove carriage returns
-        text = re.sub(r'\r', '', text)
-        return text
+    def _handle_chat_success(self, data: dict):
+        self.pending_request = False
+        self.input_field.setEnabled(True)
+        self.status_bar.set_status("Connected", "#4ec9b0")
+        
+        session = data.get("session")
+        if session:
+            self._append_text("", 'default')  # ensure cursor at end
+        thinking = data.get("thinking", "").strip()
+        if thinking:
+            self._append_text(f"\n💭 {thinking}\n", 'thinking')
+        
+        tool_calls = data.get("tool_calls", [])
+        for tool in tool_calls:
+            name = tool.get("name", "tool")
+            output = tool.get("output", "")
+            self._append_text(f"\n🔧 {name}\n", 'tool')
+            self._append_text(f"{output}\n", 'tool')
+        
+        response = data.get("response", "").strip()
+        if response:
+            self._append_text(f"\nT.O.M.: {response}\n", 'assistant')
+    
+    def _handle_chat_error(self, message: str):
+        self.pending_request = False
+        self.input_field.setEnabled(True)
+        self.status_bar.set_status("Error", "#f48771")
+        self._append_text(f"\nError: {message}\n", 'error')
     
     def _append_text(self, text, format_name='default'):
         """Append text with proper color formatting"""
@@ -337,9 +327,14 @@ class TerminalWindow(QMainWindow):
     
     def cleanup(self):
         """Cleanup on quit"""
-        if self.process.state() == QProcess.Running:
-            self.process.terminate()
-            self.process.waitForFinished(2000)
+        if self.client:
+            if self.session_id:
+                try:
+                    self.client.delete(f"/sessions/{self.session_id}", timeout=5)
+                except httpx.HTTPError:
+                    pass
+            self.client.close()
+            self.client = None
 
 
 class TrayApplication:

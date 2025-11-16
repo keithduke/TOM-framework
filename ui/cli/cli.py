@@ -9,7 +9,9 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
+import httpx
 import psutil
 import mlx.core as mx
 from rich.console import Console
@@ -29,7 +31,8 @@ from core.config import (
     TOOL_RESULT_CONTEXT_RATIO,
     MAX_TOOL_RESULT_TOKENS,
     LOW_MEMORY_THRESHOLD_GB,
-    ENABLE_STREAMING
+    ENABLE_STREAMING,
+    DEFAULT_MODEL_MAX_CONTEXT,
 )
 from core.context_manager import ContextManager, TokenCounter
 from core.model_manager import ModelManager
@@ -90,13 +93,23 @@ class ChatInterface:
         prewarm: bool = True,
         max_context_override: int = None,
         auto_gc: bool = True,
-        gc_frequency: int = 3
+        gc_frequency: int = 3,
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
     ):
         self.model_path = model_path
+        self.api_base = api_base
+        self.use_api = api_base is not None
+        self.api_client: Optional[httpx.Client] = None
+        self.api_session_id: Optional[str] = None
+        self.api_headers = {"X-TOM-API-Key": api_key} if api_key else None
         
-        # Load model config
-        config = load_model_config(self.model_path)
-        model_max_context = config.get("max_position_embeddings", 32768)
+        model_max_context = DEFAULT_MODEL_MAX_CONTEXT
+        if self.model_path.exists():
+            config = load_model_config(self.model_path)
+            model_max_context = config.get("max_position_embeddings", DEFAULT_MODEL_MAX_CONTEXT)
+        elif not self.use_api:
+            logger.warning("Model path not found. Using default context size.")
         
         # Set max context
         max_context_tokens = max_context_override or int(model_max_context * CONTEXT_USAGE_RATIO)
@@ -111,15 +124,19 @@ class ChatInterface:
         
         # Initialize managers
         self.context_manager = ContextManager(max_context_tokens=max_context_tokens)
-        self.model_manager = ModelManager(
-            model_path=model_path,
-            context_manager=self.context_manager,
-            cache_path=cache_path,
-            enable_cache=enable_cache,
-            prewarm=prewarm,
-            auto_gc=auto_gc,
-            gc_frequency=gc_frequency
-        )
+        self.model_manager: Optional[ModelManager] = None
+        if not self.use_api:
+            self.model_manager = ModelManager(
+                model_path=model_path,
+                context_manager=self.context_manager,
+                cache_path=cache_path,
+                enable_cache=enable_cache,
+                prewarm=prewarm,
+                auto_gc=auto_gc,
+                gc_frequency=gc_frequency
+            )
+        else:
+            logger.info("API mode enabled; deferring to remote FastAPI backend.")
         
         # Setup prompt session
         self.prompt_session = PromptSession(
@@ -140,13 +157,21 @@ class ChatInterface:
     
     def load_model(self):
         """Load the model"""
-        with Status("Loading model...", console=console):
-            self.model_manager.load_model()
+        if self.use_api:
+            with Status("Connecting to API...", console=console):
+                self._connect_api_backend()
+        else:
+            with Status("Loading model...", console=console):
+                self.model_manager.load_model()
     
     def run(self):
         """Main interactive loop"""
-        cache_status = "Caching enabled" if self.model_manager.enable_cache else "Caching disabled"
-        streaming_status = "Streaming enabled" if ENABLE_STREAMING else "Streaming disabled"
+        if self.use_api:
+            cache_status = f"API mode ({self.api_base})"
+            streaming_status = "Remote responses"
+        else:
+            cache_status = "Caching enabled" if self.model_manager.enable_cache else "Caching disabled"
+            streaming_status = "Streaming enabled" if ENABLE_STREAMING else "Streaming disabled"
         
         console.print(Panel.fit(
             f"[bold blue]T.O.M. CLI[/bold blue]\n"
@@ -188,9 +213,12 @@ class ChatInterface:
                     self._show_memory_stats()
                     continue
                 elif user_input.lower() == '/gc':
-                    console.print("[dim]Running GC...[/dim]")
-                    self.model_manager.run_gc()
-                    console.print("[green]✓ GC complete[/green]")
+                    if self.model_manager:
+                        console.print("[dim]Running GC...[/dim]")
+                        self.model_manager.run_gc()
+                        console.print("[green]✓ GC complete[/green]")
+                    else:
+                        console.print("[yellow]GC not available in API mode[/yellow]")
                     continue
                 elif user_input.lower() == '/context':
                     self._show_context()
@@ -201,11 +229,15 @@ class ChatInterface:
                 elif user_input.lower() == '/clear-cache':
                     self._clear_cache()
                     continue
+
+                if self.use_api:
+                    self._send_api_message(user_input)
+                    continue
                 
                 # Add user message
                 should_reset = self.context_manager.add_message("user", user_input)
                 
-                if should_reset and self.model_manager.enable_cache:
+                if should_reset and self.model_manager and self.model_manager.enable_cache:
                     logger.warning("Significant trimming, resetting cache")
                     self.model_manager.reset_cache()
                 
@@ -219,6 +251,9 @@ class ChatInterface:
             console.print("\nGoodbye!")
         except Exception as e:
             logger.error(f"Chat error: {e}", exc_info=True)
+        finally:
+            if self.use_api:
+                self._cleanup_api_backend()
     
     def _generate_streaming(self):
         """Generate response with streaming - FIXED tool handling"""
@@ -377,6 +412,94 @@ class ChatInterface:
         elapsed = time.time() - start_time
         console.print(f"\n[bold cyan]T.O.M.[/bold cyan]: {final_response}")
         console.print(f"[dim]{elapsed:.2f}s[/dim]")
+
+    # --- API mode helpers -------------------------------------------------
+
+    def _connect_api_backend(self):
+        """Initialize HTTP client and create a remote session."""
+        base_url = self.api_base.rstrip("/") if self.api_base else ""
+        if not base_url:
+            raise RuntimeError("API base URL not provided")
+        
+        self.api_client = httpx.Client(
+            base_url=base_url,
+            timeout=60.0,
+            headers=self.api_headers or None,
+        )
+        try:
+            resp = self.api_client.get("/health", timeout=10)
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"Failed to reach API at {base_url}: {exc}") from exc
+        
+        payload = {
+            "max_context_tokens": self.context_manager.max_context_tokens,
+            "system_prompt": self.context_manager.system_prompt,
+        }
+        resp = self.api_client.post("/sessions", json=payload, timeout=30)
+        resp.raise_for_status()
+        session_data = resp.json()
+        self.api_session_id = session_data["session_id"]
+        self._sync_context_from_session(session_data)
+        logger.info(f"Connected to API session {self.api_session_id}")
+
+    def _cleanup_api_backend(self):
+        """Delete remote session and close HTTP client."""
+        if self.api_client and self.api_session_id:
+            try:
+                self.api_client.delete(f"/sessions/{self.api_session_id}", timeout=10)
+            except httpx.HTTPError:
+                pass
+        if self.api_client:
+            self.api_client.close()
+        self.api_client = None
+        self.api_session_id = None
+
+    def _sync_context_from_session(self, session_data: dict):
+        """Mirror remote session state into local context manager for inspection commands."""
+        self.context_manager.system_prompt = session_data.get(
+            "system_prompt", self.context_manager.system_prompt
+        )
+        if "max_context_tokens" in session_data:
+            self.context_manager.max_context_tokens = session_data["max_context_tokens"]
+        self.context_manager.messages = [
+            {"role": msg["role"], "content": msg["content"]}
+            for msg in session_data.get("messages", [])
+        ]
+
+    def _send_api_message(self, user_input: str):
+        """Send user input to remote API and display the response."""
+        if not self.api_client or not self.api_session_id:
+            console.print("[red]API session not initialized[/red]")
+            return
+        
+        try:
+            resp = self.api_client.post(
+                f"/sessions/{self.api_session_id}/chat",
+                json={"content": user_input, "run_tools": True},
+                timeout=60,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            console.print(f"[red]API error: {exc}[/red]")
+            return
+        
+        data = resp.json()
+        self._sync_context_from_session(data["session"])
+        
+        thinking = data.get("thinking", "")
+        if thinking:
+            console.print(f"\n[dim italic]💭 Thinking: {thinking}[/dim italic]")
+        
+        tool_calls = data.get("tool_calls", [])
+        if tool_calls:
+            for tool in tool_calls:
+                console.print(f"\n[magenta]Tool: {tool.get('name', 'unknown')}[/magenta]")
+                console.print(Panel(tool.get("output", ""), border_style="magenta"))
+        
+        response_text = data.get("response", "").strip()
+        if response_text:
+            console.print(f"\n[bold cyan]T.O.M.[/bold cyan]: {response_text}")
     
     def _show_help(self):
         """Display help"""
@@ -416,6 +539,10 @@ class ChatInterface:
     
     def _show_cache_info(self):
         """Show cache info"""
+        if not self.model_manager:
+            console.print("[yellow]Cache info is managed by the API in remote mode[/yellow]")
+            return
+        
         cache_info = self.model_manager.get_cache_info()
         
         table = Table(title="Prompt Cache")
@@ -499,6 +626,10 @@ class ChatInterface:
     
     def _show_raw_prompt(self):
         """Show raw formatted prompt"""
+        if not self.model_manager or not self.model_manager.tokenizer:
+            console.print("[yellow]Raw prompts unavailable in API mode[/yellow]")
+            return
+        
         console.print("\n[bold cyan]RAW PROMPT (WITH TOOLS)[/bold cyan]")
         prompt = self.context_manager.build_prompt(self.model_manager.tokenizer, include_tools=True)
         console.print(Panel(prompt, border_style="magenta"))
@@ -510,6 +641,10 @@ class ChatInterface:
     
     def _clear_cache(self):
         """Clear cache"""
+        if not self.model_manager:
+            console.print("[yellow]Cache operations are handled by the API in remote mode[/yellow]")
+            return
+        
         if not self.model_manager.enable_cache:
             console.print("[yellow]Caching disabled[/yellow]")
             return

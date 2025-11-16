@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
+import logging
 from typing import Dict, List, Optional
 from uuid import uuid4
 
@@ -18,6 +19,8 @@ from core.config import (
 
 from .config import ApiSettings
 from .schemas import ToolCallResult
+
+logger = logging.getLogger("tom_api")
 
 
 @dataclass
@@ -78,6 +81,16 @@ class ApiRuntime:
         )
         manager.load_model()
         self._model_manager = manager
+
+    def shutdown(self) -> None:
+        """Release model resources and clear session state."""
+        if self._model_manager:
+            try:
+                self._model_manager.run_gc()
+            except Exception:
+                logger.warning("Failed to run GC during shutdown", exc_info=True)
+        self._model_manager = None
+        self.sessions.clear()
 
     def create_session(
         self,

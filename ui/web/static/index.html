@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>T.O.M. Web Client</title>
+    <link rel="stylesheet" href="/web/styles.css">
+</head>
+<body>
+    <div class="app-shell">
+        <header class="app-header">
+            <div>
+                <h1>T.O.M.</h1>
+                <p>API-backed assistant shared by the CLI, PySide6, and web UI.</p>
+            </div>
+            <div class="status">
+                <span id="status-dot" class="status-dot offline"></span>
+                <span id="status-text">Offline</span>
+            </div>
+        </header>
+
+        <section class="connection-panel">
+            <button id="new-session">Start fresh session</button>
+            <div class="session-meta">
+                <span>Session: <strong id="session-id">not created</strong></span>
+                <span>Context window: <strong id="session-context">—</strong></span>
+            </div>
+            <p class="hint">
+                Keep this window open while `python main.py` is running. Requests stay on your machine.
+            </p>
+        </section>
+
+        <section id="conversation" class="conversation" aria-live="polite"></section>
+
+        <section class="composer">
+            <form id="chat-form">
+                <textarea id="message-input" placeholder="Ask TOM something…" rows="3"></textarea>
+                <div class="composer-controls">
+                    <label><input type="checkbox" id="run-tools" checked> Allow tool calls</label>
+                    <span id="error-banner" role="status"></span>
+                    <button type="submit">Send</button>
+                </div>
+            </form>
+        </section>
+    </div>
+
+    <script src="/web/app.js" type="module"></script>
+</body>
+</html>

@@ -72,52 +72,30 @@ python -m mlx_lm.convert \
 
 ### Step 5: Launch T.O.M.
 
-T.O.M. can be launched in two modes:
+`main.py` is now the single entry point for every adapter:
 
-#### Terminal Mode (CLI)
-```bash
-python main.py
-```
+- **Default** – `python main.py` starts the FastAPI service on `http://127.0.0.1:8000` and opens the new web UI at `/web/`.
+- **CLI** – `python main.py --cli` runs the original terminal client (all CLI flags still apply, e.g. `python main.py --cli --model ./Qwen3-4B`).
+- **PySide desktop** – `python main.py --pyside` spins up the API server in the background and launches the Qt GUI.
+- **Legacy launcher** – `python launcher.py` continues to work but now simply proxies to `python main.py --pyside`.
 
-On first launch, T.O.M. will initialize the prompt cache and be ready for interaction.
-
-#### Launcher Mode (GUI)
-```bash
-python launcher.py
-```
-
-The launcher provides a persistent GUI window with:
-- **System tray integration** - T.O.M. stays in your menu bar
-- **Dedicated app window** - Terminal-style interface with modern styling
-- **Always accessible** - Click the tray icon or menu item to show/hide
-- **Same functionality** - Full CLI capabilities in a GUI wrapper
-
-The launcher is a thin wrapper around the CLI, showcasing T.O.M.'s modular architecture. All core functionality remains in the CLI modules.
+This keeps every workflow on the same code path: FastAPI owns orchestration, and each UI is just a thin adapter layered on top.
 
 ---
 
 ## Using T.O.M.
 
-T.O.M. offers two interface modes to suit different workflows:
+T.O.M. keeps three presentation layers in sync via the FastAPI backend:
 
-### Terminal Mode vs Launcher Mode
+- **Web UI (default)**: `python main.py` starts the API and opens the browser at `http://127.0.0.1:8000/web/`. Chat, inspect tool calls, and monitor thinking directly in the browser.
+- **Terminal CLI**: `python main.py --cli [extra CLI flags]` launches the original prompt-toolkit experience. Ideal for power users who want raw terminal control, scripting, or multiplexing sessions.
+- **PySide6 desktop shell**: `python main.py --pyside` runs the Qt window with tray integration while transparently hosting the API in the background. The legacy `python launcher.py` command simply forwards to this mode.
 
-**Terminal Mode (`python main.py`)**
-- Traditional command-line interface
-- Runs in your terminal window
-- Best for: Quick interactions, scripting, integration with other CLI tools
+Every adapter shares the same cache, model runtime, and tooling—they only differ in UI.
 
-**Launcher Mode (`python launcher.py`)**
-- GUI application with system tray integration
-- Dedicated window with terminal styling
-- Persistent menu bar presence
-- Best for: Extended sessions, always-on availability, desktop workflow integration
+### PySide (Desktop) Features
 
-Both modes provide identical functionality and share the same codebase.
-
-### Launcher Mode Features
-
-When using `launcher.py`, you get:
+When using `python main.py --pyside` (or the compatibility `launcher.py`), you get:
 
 #### System Tray Integration
 - **Menu bar icon**: T.O.M. appears in your system tray/menu bar
@@ -238,7 +216,7 @@ You'll see this happen seamlessly in the conversation flow.
 T.O.M. also exposes the same orchestration stack through a FastAPI app that runs entirely on your machine. Start it with:
 
 ```bash
-uvicorn services.api.main:app --reload
+uvicorn services.api.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 Endpoints:
@@ -247,7 +225,7 @@ Endpoints:
 - `POST /sessions/{id}/chat` – submit a user message; the service handles thinking, tool execution, and the assistant reply in a single payload
 - `POST /sessions/{id}/messages` and `DELETE /sessions/{id}` – manually inspect or manage session history
 
-The CLI will soon gain an option to talk to this API over HTTP, and the web client will reuse these endpoints in Phase 3.
+To point the CLI at the API instead of loading the local model, launch it with `python main.py --api-base http://127.0.0.1:8000`. If you’ve set `TOM_API_KEY` on the server, pass `--api-key` (or set `TOM_API_KEY` in the CLI environment) so requests include the `X-TOM-API-Key` header. Use `python main.py --pyside` for the desktop client (it talks to the same API). The web client arriving in Phase 3 will reuse these endpoints as well.
 
 ---
 
@@ -277,8 +255,8 @@ Use these scripts whenever you need to diagnose prompt wiring or tool execution 
 ### Module Structure
 
 ```
-├── main.py                 # CLI application entry point
-├── launcher.py             # GUI launcher with tray integration
+├── main.py                 # Unified entry point (web/API, CLI, PySide)
+├── launcher.py             # Back-compat shim for PySide launcher
 ├── cli.py                  # CLI interface and interactive loop
 ├── model_manager.py        # Model loading, caching, and generation
 ├── context_manager.py      # Conversation context and prompt building
@@ -291,16 +269,14 @@ Use these scripts whenever you need to diagnose prompt wiring or tool execution 
 ### Module Responsibilities
 
 #### `main.py`
-- CLI application entry point
-- Command-line argument parsing
-- Launches the terminal interface
+- Unified entry point
+- Parses global flags (`--cli`, `--pyside`, `--host`, `--port`, etc.)
+- Starts FastAPI + web UI by default or dispatches to CLI/PySide adapters
 
 #### `launcher.py`
-- GUI application entry point
-- Qt-based window and system tray management
-- Wraps CLI process for GUI presentation
-- Terminal emulation with styled output
-- Showcases modular architecture - zero changes to core CLI
+- Legacy Qt launcher entry point
+- Calls `python main.py --pyside` for compatibility
+- Maintained for existing shortcuts/scripts pointing directly at `launcher.py`
 
 #### `config.py`
 - Centralized configuration management
@@ -388,7 +364,12 @@ Display to User
 ### Import Dependencies
 
 ```
-main.py (CLI entry)
+main.py (Unified entry)
+  ├─→ services/api/main.py (default web/API mode)
+  ├─→ ui/cli/main.py (when --cli)
+  └─→ ui/pyside6/launcher.py (when --pyside)
+
+ui/cli/main.py
   └─→ cli.py
         ├─→ config.py
         ├─→ context_manager.py
@@ -405,8 +386,8 @@ main.py (CLI entry)
         └─→ utils.py
               └─→ config.py
 
-launcher.py (GUI entry)
-  └─→ main.py (spawned as subprocess)
+launcher.py (legacy entry)
+  └─→ python main.py --pyside
 ```
 
 ---
@@ -523,14 +504,17 @@ python main.py --debug
 python main.py -m ./model --max-context 16000 --gc-frequency 10 --debug
 ```
 
-### Launcher Mode (launcher.py)
+### PySide Desktop Mode
 
 ```bash
-# Launch GUI application
+# Launch GUI application (with local API)
+python main.py --pyside
+
+# Compatibility shim
 python launcher.py
 ```
 
-The launcher automatically starts `main.py` as a subprocess with default settings. To use custom CLI options with the launcher, modify the model path or other settings directly in `launcher.py` or run `main.py` in terminal mode instead.
+The PySide launcher automatically starts the FastAPI server (if it is not already running) and then opens the Qt window. The `launcher.py` script remains solely for back-compat; new workflows should call `python main.py --pyside` instead.
 
 ### Utility Commands
 
