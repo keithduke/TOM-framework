@@ -2,4 +2,5 @@ Qwen3-*/
 venv/
 __pycache__/
 .DS_Store
+.tom_history
 prompt_cache.safetensors
