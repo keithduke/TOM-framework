@@ -2,7 +2,7 @@
 
 **T**erminal **O**rchestrated **M**odel - A production-ready agentic framework built on Qwen3-4B-Thinking-2507 with MLX optimization for Apple Silicon.
 
-T.O.M. is an interactive AI assistant featuring intelligent prompt caching, tool-calling capabilities, and transparent reasoning processes. Built with modularity and performance in mind.
+T.O.M. is a **local-first** AI assistant: every component (MLX runtime, FastAPI service, CLI/GUI/web clients) runs on your own machine and talks over loopback. There is no hosted backend, so your data, cache, and tools never leave your device. The framework layers intelligent prompt caching, tool-calling, and transparent reasoning on top of that local runtime while keeping the modules modular and ergonomic.
 
 ---
 
@@ -233,6 +233,22 @@ When T.O.M. determines a tool is needed:
 
 You'll see this happen seamlessly in the conversation flow.
 
+### Local FastAPI Service
+
+T.O.M. also exposes the same orchestration stack through a FastAPI app that runs entirely on your machine. Start it with:
+
+```bash
+uvicorn services.api.main:app --reload
+```
+
+Endpoints:
+- `GET /health` – readiness + model information
+- `POST /sessions` – create a conversation session (override system prompt or context size as needed)
+- `POST /sessions/{id}/chat` – submit a user message; the service handles thinking, tool execution, and the assistant reply in a single payload
+- `POST /sessions/{id}/messages` and `DELETE /sessions/{id}` – manually inspect or manage session history
+
+The CLI will soon gain an option to talk to this API over HTTP, and the web client will reuse these endpoints in Phase 3.
+
 ---
 
 ## Diagnostics & Troubleshooting
@@ -248,6 +264,8 @@ Use these scripts whenever you need to diagnose prompt wiring or tool execution 
 ---
 
 ## Architecture
+
+> See `ROADMAP.md` for the multi-phase plan that follows the Sprint 1 refactor.
 
 ### Design Philosophy
 
