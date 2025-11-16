@@ -8,16 +8,16 @@ This roadmap captures the near-term milestones for evolving T.O.M. from a CLI-fi
 - Moved CLI/PySide6 adapters under `ui/` with compatibility shims.
 - Updated docs/tests to reflect the new layout.
 
-## Phase 2 — Service Hardening
-- Flesh out `services/api` with session lifecycle, message streaming, and tool execution endpoints.
-- Wire the CLI to call the API (toggle between direct-core and HTTP mode).
-- Add authentication hooks and config-driven model selection.
-- Expand tests (`test_end_to_end.py`) to cover API calls via `httpx`.
+## Phase 2 — Service Hardening (🚧)
+- Flesh out `services/api` with session lifecycle, message streaming (SSE first, WebSockets later), and tool execution endpoints.
+- Wire the CLI to call the API (toggle between direct-core and HTTP mode) so every adapter rides the same backend.
+- Keep auth optional: default local-only mode, with env-driven API key if someone binds beyond localhost.
+- Expand tests (`test_end_to_end.py`, `test_api_endpoints.py`) to cover HTTP flows via `httpx`.
 
-## Phase 3 — Web Client
-- Implement `ui/web/` (FastAPI static mount or SPA) for chat + tool visibility.
-- Support streaming responses, cache stats, and tool result inspection in the browser.
-- Share session state across CLI, PySide6, and web via the API.
+## Phase 3 — Web Client (🚧)
+- Finish `ui/web/` features: better session controls, streaming output, cache stats, and devtools for prompt/tool inspection.
+- Share the session timeline across CLI, PySide6, and web; each adapter should be able to reconnect to an existing session.
+- Layer a minimal design system (thinking/tool states, error handling) so the browser experience matches CLI clarity.
 
 ## Phase 4 — Deployment & Ops
 - Containerize the FastAPI service (uvicorn worker sizing, MLX config).
