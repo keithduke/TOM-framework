@@ -10,12 +10,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from context_manager import ContextManager
-from tools import TOOLS_DEFINITIONS
-from utils import load_model_config
+from core.context_manager import ContextManager
+from core.tools import TOOLS_DEFINITIONS
+from core.utils import load_model_config
 
 
-def test_prompt_with_tools():
+def _diagnose_prompt_with_tools():
     """Test how tools are included in the prompt"""
     print("=" * 80)
     print("TEST: Prompt Building with Tools")
@@ -50,11 +50,10 @@ def test_prompt_with_tools():
     assert "get_datetime" not in prompt_without_tools, "Tools should not be in no-tool prompt"
 
     print("\n✓ Fallback prompt builder includes tools correctly")
-
     return prompt_with_tools
 
 
-def test_with_real_tokenizer():
+def _diagnose_with_real_tokenizer():
     """Test with actual model tokenizer to see chat template behavior"""
     print("\n" + "=" * 80)
     print("TEST: Prompt Building with Real Tokenizer")
@@ -133,7 +132,7 @@ def test_with_real_tokenizer():
         return None
 
 
-def test_chat_template_tools_support():
+def _diagnose_chat_template_tools_support():
     """Test if the chat template actually supports tools"""
     print("\n" + "=" * 80)
     print("TEST: Chat Template Tools Support")
@@ -211,15 +210,27 @@ def test_chat_template_tools_support():
         return None
 
 
+def test_prompt_with_tools():
+    _diagnose_prompt_with_tools()
+
+
+def test_with_real_tokenizer():
+    _diagnose_with_real_tokenizer()
+
+
+def test_chat_template_tools_support():
+    _diagnose_chat_template_tools_support()
+
+
 if __name__ == "__main__":
     print("\n" + "=" * 80)
     print("PROMPT BUILDING & TOOL INTEGRATION TEST SUITE")
     print("=" * 80 + "\n")
 
     # Run tests
-    test_prompt_with_tools()
-    test_with_real_tokenizer()
-    supports_tools = test_chat_template_tools_support()
+    _diagnose_prompt_with_tools()
+    _diagnose_with_real_tokenizer()
+    supports_tools = _diagnose_chat_template_tools_support()
 
     # Summary
     print("\n" + "=" * 80)

@@ -47,7 +47,7 @@ class MockTokenizer:
         return "".join(prompt_parts)
 
 
-def test_scenario_1_template_rejects_tools():
+def _run_scenario_1_template_rejects_tools():
     """
     Scenario 1: Chat template raises TypeError when given 'tools' parameter
     This is GOOD - it will fall back to our custom prompt builder
@@ -58,8 +58,8 @@ def test_scenario_1_template_rejects_tools():
 
     tokenizer = MockTokenizer(supports_tools_param=False)
 
-    from context_manager import ContextManager
-    from tools import TOOLS_DEFINITIONS
+    from core.context_manager import ContextManager
+    from core.tools import TOOLS_DEFINITIONS
 
     context = ContextManager(max_context_tokens=8000, tokenizer=tokenizer)
     context.add_message("user", "What time is it?")
@@ -80,7 +80,7 @@ def test_scenario_1_template_rejects_tools():
         return False
 
 
-def test_scenario_2_template_ignores_tools():
+def _run_scenario_2_template_ignores_tools():
     """
     Scenario 2: Chat template ACCEPTS 'tools' parameter but IGNORES it
     This is BAD - no exception, so no fallback, but tools not included
@@ -92,8 +92,8 @@ def test_scenario_2_template_ignores_tools():
 
     tokenizer = MockTokenizer(supports_tools_param=True, actually_includes_tools=False)
 
-    from context_manager import ContextManager
-    from tools import TOOLS_DEFINITIONS
+    from core.context_manager import ContextManager
+    from core.tools import TOOLS_DEFINITIONS
 
     context = ContextManager(max_context_tokens=8000, tokenizer=tokenizer)
     context.add_message("user", "What time is it?")
@@ -121,7 +121,7 @@ def test_scenario_2_template_ignores_tools():
         return False
 
 
-def test_scenario_3_template_includes_tools():
+def _run_scenario_3_template_includes_tools():
     """
     Scenario 3: Chat template properly supports and includes tools
     This is IDEAL but rare
@@ -132,8 +132,8 @@ def test_scenario_3_template_includes_tools():
 
     tokenizer = MockTokenizer(supports_tools_param=True, actually_includes_tools=True)
 
-    from context_manager import ContextManager
-    from tools import TOOLS_DEFINITIONS
+    from core.context_manager import ContextManager
+    from core.tools import TOOLS_DEFINITIONS
 
     context = ContextManager(max_context_tokens=8000, tokenizer=tokenizer)
     context.add_message("user", "What time is it?")
@@ -225,6 +225,18 @@ This ensures the model knows about tools regardless of chat template.
 """)
 
 
+def test_scenario_1_template_rejects_tools():
+    _run_scenario_1_template_rejects_tools()
+
+
+def test_scenario_2_template_ignores_tools():
+    _run_scenario_2_template_ignores_tools()
+
+
+def test_scenario_3_template_includes_tools():
+    _run_scenario_3_template_includes_tools()
+
+
 if __name__ == "__main__":
     print("\n" + "=" * 80)
     print("CHAT TEMPLATE TOOL SUPPORT DIAGNOSTIC")
@@ -233,9 +245,9 @@ if __name__ == "__main__":
     results = []
 
     # Test all scenarios
-    results.append(("Scenario 1: Template rejects tools", test_scenario_1_template_rejects_tools()))
-    results.append(("Scenario 2: Template ignores tools", test_scenario_2_template_ignores_tools()))
-    results.append(("Scenario 3: Template includes tools", test_scenario_3_template_includes_tools()))
+    results.append(("Scenario 1: Template rejects tools", _run_scenario_1_template_rejects_tools()))
+    results.append(("Scenario 2: Template ignores tools", _run_scenario_2_template_ignores_tools()))
+    results.append(("Scenario 3: Template includes tools", _run_scenario_3_template_includes_tools()))
 
     # Summary
     print("\n" + "=" * 80)

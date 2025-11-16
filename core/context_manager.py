@@ -5,10 +5,10 @@ FIXED: Tool persistence across multi-turn conversations
 
 import json
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List
 
-from config import DEFAULT_SYSTEM_PROMPT
-from tools import TOOLS_DEFINITIONS
+from .config import DEFAULT_SYSTEM_PROMPT
+from .tools import TOOLS_DEFINITIONS
 
 logger = logging.getLogger("tom_cli")
 
@@ -135,33 +135,79 @@ class ContextManager:
         total = system_tokens + message_tokens + tools_tokens
         return total
     
-    def build_prompt(self, tokenizer, include_tools=True) -> str:
+    def build_prompt(self, tokenizer, include_tools: bool = False) -> str:
         """
-        Build the complete prompt using chat template or fallback.
-        
-        Args:
-            tokenizer: Model tokenizer
-        
-        Returns:
-            Formatted prompt string ready for generation
+        Build the complete prompt using the tokenizer's chat template when
+        available, otherwise fall back to a deterministic handcrafted format.
         """
-        # Build messages list with system prompt
         chat_messages = [{"role": "system", "content": self.system_prompt}]
         chat_messages.extend(self.messages)
-        
-        if hasattr(tokenizer, 'apply_chat_template') and tokenizer.chat_template is not None and TOOLS_DEFINITIONS:
+
+        if tokenizer and hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
             try:
-                prompt = tokenizer.apply_chat_template(
-                    chat_messages,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                    tools=TOOLS_DEFINITIONS if TOOLS_DEFINITIONS else None
+                kwargs = {"tokenize": False, "add_generation_prompt": True}
+                if include_tools and TOOLS_DEFINITIONS:
+                    kwargs["tools"] = TOOLS_DEFINITIONS
+
+                prompt = tokenizer.apply_chat_template(chat_messages, **kwargs)
+
+                if include_tools and TOOLS_DEFINITIONS:
+                    first_tool = TOOLS_DEFINITIONS[0]["function"]["name"]
+                    if first_tool not in prompt:
+                        logger.warning(
+                            "Chat template ignored tool definitions; using fallback prompt"
+                        )
+                        return self._build_fallback_prompt(chat_messages, include_tools)
+
+                has_tool_role = any(
+                    msg.get("role") in {"tool", "function"} for msg in chat_messages
                 )
+                if has_tool_role and "<tool_response>" not in prompt:
+                    logger.warning(
+                        "Chat template dropped tool/function role messages; using fallback"
+                    )
+                    return self._build_fallback_prompt(chat_messages, include_tools)
+
                 logger.debug(f"Built prompt using chat template ({len(prompt)} chars)")
                 return prompt
-            except Exception as e:
-                logger.warning(f"Chat template failed: {e}, using fallback")
-        
+            except TypeError as exc:
+                logger.warning(f"Chat template rejected provided arguments: {exc}")
+            except Exception as exc:
+                logger.warning(f"Chat template failed ({exc}); using fallback")
+
+        return self._build_fallback_prompt(chat_messages, include_tools)
+    
+    def _build_fallback_prompt(
+        self,
+        chat_messages: List[Dict[str, str]],
+        include_tools: bool,
+    ) -> str:
+        """Construct prompt manually so tools are honored regardless of tokenizer."""
+        parts: List[str] = []
+
+        if chat_messages and chat_messages[0]["role"] == "system":
+            parts.append(f"System: {chat_messages[0]['content']}\n")
+            chat_messages = chat_messages[1:]
+
+        if include_tools and TOOLS_DEFINITIONS:
+            tools_str = json.dumps(TOOLS_DEFINITIONS, indent=2)
+            parts.append(f"Available Tools:\n{tools_str}\n")
+
+        for msg in chat_messages:
+            role = msg["role"]
+            content = msg["content"]
+            if role == "user":
+                parts.append(f"User: {content}")
+            elif role == "assistant":
+                parts.append(f"Assistant: {content}")
+            elif role == "tool":
+                parts.append(f"User:\n<tool_response>\n{content}\n</tool_response>")
+            elif role == "function":
+                parts.append(f"User:\n{content}")
+
+        parts.append("Assistant:")
+        return "\n\n".join(parts)
+    
     def get_stats(self) -> Dict[str, any]:
         """Get context statistics for monitoring"""
         total_tokens = self._count_total_tokens()

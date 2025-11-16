@@ -10,8 +10,8 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Dict, List
 
-from config import MAX_FILE_SIZE_MB
-from utils import ordinal
+from .config import MAX_FILE_SIZE_MB
+from .utils import ordinal
 
 logger = logging.getLogger("tom_cli")
 

@@ -11,7 +11,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from tools import (
+from core.tools import (
     TOOLS_DEFINITIONS,
     TOOLS_REGISTRY,
     extract_tool_calls,
@@ -43,7 +43,6 @@ def test_tool_definitions():
         print(f"✓ {tool_def['function']['name']}: Valid structure")
 
     print("\n✓ All tool definitions are valid\n")
-    return True
 
 
 def test_tool_extraction():
@@ -111,7 +110,6 @@ def test_tool_extraction():
     print("✓ No tool calls handled correctly")
 
     print("\n✓ All extraction tests passed\n")
-    return True
 
 
 def test_tool_execution():
@@ -159,7 +157,6 @@ def test_tool_execution():
     print("✓ Invalid tools handled correctly")
 
     print("\n✓ All execution tests passed\n")
-    return True
 
 
 def test_strip_tool_calls():
@@ -183,7 +180,6 @@ I'll check the time."""
     assert "Let me help you" in stripped, "Content was removed"
     assert "I'll check the time" in stripped, "Content was removed"
     print("✓ Tool call stripping works\n")
-    return True
 
 
 def test_argument_parsing():
@@ -216,8 +212,6 @@ def test_argument_parsing():
     assert parsed3 == {}, "Invalid input should return empty dict"
     print("✓ Invalid input handled correctly\n")
 
-    return True
-
 
 if __name__ == "__main__":
     print("\n" + "=" * 80)
@@ -235,8 +229,8 @@ if __name__ == "__main__":
     results = []
     for name, test_func in tests:
         try:
-            result = test_func()
-            results.append((name, result, None))
+            test_func()
+            results.append((name, True, None))
         except Exception as e:
             results.append((name, False, str(e)))
             print(f"\n✗ {name} FAILED: {e}\n")

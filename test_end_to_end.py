@@ -10,15 +10,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 
-def test_complete_tool_flow():
+def _run_complete_tool_flow():
     """Test the complete flow from prompt -> extraction -> execution"""
     print("=" * 80)
     print("END-TO-END TOOL CALL FLOW TEST")
     print("=" * 80)
 
-    from context_manager import ContextManager
-    from tools import extract_tool_calls, execute_tool_call, strip_tool_calls
-    from tools import TOOLS_DEFINITIONS
+    from core.context_manager import ContextManager
+    from core.tools import extract_tool_calls, execute_tool_call, strip_tool_calls
+    from core.tools import TOOLS_DEFINITIONS
 
     # Step 1: Build a prompt with tools
     print("\n" + "-" * 80)
@@ -147,17 +147,16 @@ def test_complete_tool_flow():
     print("\n" + "=" * 80)
     print("✓ ALL STEPS PASSED - END-TO-END FLOW WORKS")
     print("=" * 80)
-
     return True
 
 
-def test_file_reading_tool():
+def _run_file_reading_tool():
     """Test the file reading tool with actual files"""
     print("\n" + "=" * 80)
     print("FILE READING TOOL TEST")
     print("=" * 80)
 
-    from tools import execute_tool_call
+    from core.tools import execute_tool_call
 
     # Create test file
     test_file = Path("/tmp/test_tom_tool.txt")
@@ -214,14 +213,22 @@ def test_file_reading_tool():
     return True
 
 
+def test_complete_tool_flow():
+    _run_complete_tool_flow()
+
+
+def test_file_reading_tool():
+    _run_file_reading_tool()
+
+
 if __name__ == "__main__":
     print("\n" + "=" * 80)
     print("COMPREHENSIVE END-TO-END TEST SUITE")
     print("=" * 80 + "\n")
 
     # Run all tests
-    test1_pass = test_complete_tool_flow()
-    test2_pass = test_file_reading_tool()
+    test1_pass = _run_complete_tool_flow()
+    test2_pass = _run_file_reading_tool()
 
     # Summary
     print("\n" + "=" * 80)

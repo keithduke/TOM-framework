@@ -11,7 +11,7 @@ from typing import Optional, Generator, Dict, Any
 import mlx.core as mx
 from mlx_lm import generate, stream_generate, load, sample_utils
 
-from config import (
+from .config import (
     MAX_GENERATION_TOKENS,
     DEFAULT_TEMPERATURE,
     DEFAULT_TOP_P,
@@ -19,9 +19,9 @@ from config import (
     DEFAULT_REPETITION_PENALTY,
     DEFAULT_GC_FREQUENCY,
 )
-from context_manager import ContextManager, TokenCounter
-from tools import TOOLS_DEFINITIONS
-from prompt_cache_manager import PromptCacheManager
+from .context_manager import ContextManager, TokenCounter
+from .tools import TOOLS_DEFINITIONS
+from .prompt_cache_manager import PromptCacheManager
 
 logger = logging.getLogger("tom_cli")
 

@@ -11,6 +11,12 @@ rich
 # System/process monitoring
 psutil
 
+# API service + CLI tooling (fastapi[standard] pulls uvicorn[standard], httpx, etc.)
+fastapi[standard]
+
+# Testing
+pytest
+
 # QT if using the launcher version
 # If you only want the CLI, you can omit this dependency
 PySide6

@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import Dict, Any
 
-from config import DEFAULT_MODEL_MAX_CONTEXT
+from .config import DEFAULT_MODEL_MAX_CONTEXT
 
 logger = logging.getLogger("tom_cli")
 

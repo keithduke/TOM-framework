@@ -24,23 +24,23 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.completion import WordCompleter, PathCompleter, merge_completers
 
-from config import (
+from core.config import (
     CONTEXT_USAGE_RATIO,
     TOOL_RESULT_CONTEXT_RATIO,
     MAX_TOOL_RESULT_TOKENS,
     LOW_MEMORY_THRESHOLD_GB,
     ENABLE_STREAMING
 )
-from context_manager import ContextManager, TokenCounter
-from model_manager import ModelManager
-from tools import (
+from core.context_manager import ContextManager, TokenCounter
+from core.model_manager import ModelManager
+from core.tools import (
     execute_tool_call, 
     extract_tool_calls, 
     strip_tool_calls,
     truncate_tool_result, 
     TOOLS_DEFINITIONS
 )
-from utils import load_model_config
+from core.utils import load_model_config
 
 # Initialize Rich console and logging
 console = Console()

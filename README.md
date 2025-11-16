@@ -48,6 +48,8 @@ pip install -r requirements.txt
 - `prompt_toolkit` - Advanced interactive prompt functionality
 - `rich` - Python library for rich text and beautiful formatting in the terminal
 - `psutil` - System and process utilities
+- `fastapi[standard]` - Installs FastAPI plus the recommended extras: `email-validator` (Pydantic email validation), `httpx` (Starlette TestClient), `jinja2` (templating), `python-multipart` (form parsing), `uvicorn[standard]` (server with uvloop and friends), and `fastapi-cli[standard]`/`fastapi-cloud-cli` (CLI tooling & deploys)
+- `pytest` - Lightweight test runner used by our `pytest -q` workflow
 - `PySide6` - Qt-based GUI framework for the launcher interface (optional)
 
 ### Step 4: Download and Convert the Model
@@ -230,6 +232,18 @@ When T.O.M. determines a tool is needed:
 4. The model generates a follow-up response incorporating the tool result
 
 You'll see this happen seamlessly in the conversation flow.
+
+---
+
+## Diagnostics & Troubleshooting
+
+The repository ships with a few diagnostic harnesses that double as pytest suites and standalone scripts. When you `pytest -q` they act like normal tests, but running the files directly surfaces richer walkthroughs:
+- `python test_prompt_building.py` prints how prompts are assembled with/without tools and inspects tokenizer chat templates.
+- `python test_chat_template_issue.py` simulates the known chat-template failure modes (rejects, ignores, or honors the `tools` parameter) and suggests mitigations.
+- `python test_end_to_end.py` replays the entire tool-call pipeline, summarizing each phase and highlighting failures.
+- `python test_tool_system.py` exercises individual tool utilities with verbose output.
+
+Use these scripts whenever you need to diagnose prompt wiring or tool execution issues beyond the terse pytest output.
 
 ---
 
