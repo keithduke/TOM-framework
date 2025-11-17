@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """API contract tests – use TestClient and stubbed ModelManager."""
 
+import json
 import os
 import sys
 import types
@@ -22,6 +23,21 @@ class StubModelManager:
 
     def load_model(self):
         self.model = object()
+
+    def stream_response(self, include_tools: bool = False):
+        thinking = "checking"
+        if include_tools and self._tool_pass:
+            content = 'Let me check.\n<tool_call>{"name": "get_datetime", "arguments": {}}</tool_call>'
+        else:
+            content = "Here is the current time from the tool."
+        if include_tools and self._tool_pass:
+            self._tool_pass = False
+            yield {"type": "thinking", "delta": thinking, "text": thinking, "complete": True}
+            yield {"type": "content", "delta": content, "text": content, "complete": False}
+        else:
+            yield {"type": "thinking", "delta": thinking, "text": thinking, "complete": True}
+            yield {"type": "content", "delta": content, "text": content, "complete": False}
+        yield {"type": "done", "thinking": thinking, "content": content}
 
     def generate_response(self, include_tools: bool = False) -> tuple[str, str]:
         if include_tools and self._tool_pass:
@@ -96,8 +112,28 @@ def test_session_and_chat_flow(api_client: TestClient):
     assert payload["tool_calls"], "Tool call results should be returned from stub"
     assert "response" in payload
 
+    session_state = api_client.get(f"/sessions/{session_id}")
+    assert session_state.status_code == 200
+    history = session_state.json()["messages"]
+    assert history[-1]["role"] == "assistant"
+    assert history[-1]["content"], "assistant response should be stored in context"
+
     delete = api_client.delete(f"/sessions/{session_id}")
     assert delete.status_code == 204
+
+
+def test_sequential_chat_persists_context(api_client: TestClient):
+    create = api_client.post("/sessions", json={})
+    session_id = create.json()["session_id"]
+
+    first = api_client.post(f"/sessions/{session_id}/chat", json={"content": "Hello"})
+    assert first.status_code == 200
+
+    second = api_client.post(f"/sessions/{session_id}/chat", json={"content": "What time is it?"})
+    assert second.status_code == 200
+    payload = second.json()
+    assert payload["session"]["messages"][-1]["role"] == "assistant"
+    assert "current time" in payload["response"]
 
 
 def test_local_only_mode(monkeypatch, api_client: TestClient):
@@ -105,3 +141,44 @@ def test_local_only_mode(monkeypatch, api_client: TestClient):
     assert resp.status_code == 200
     body = resp.json()
     assert "status" in body and "model_path" in body
+
+
+def test_chat_stream_endpoint(api_client: TestClient):
+    create = api_client.post("/sessions", json={})
+    assert create.status_code == 201
+    session_id = create.json()["session_id"]
+
+    with api_client.stream(
+        "POST",
+        f"/sessions/{session_id}/chat/stream",
+        json={"content": "What time?", "run_tools": True},
+    ) as resp:
+        assert resp.status_code == 200
+        final_payload = _extract_final_event(resp)
+
+    assert final_payload is not None
+    assert final_payload["session"]["session_id"] == session_id
+    assert "response" in final_payload
+
+
+def _extract_final_event(response) -> dict | None:
+    event = None
+    data_lines: list[str] = []
+    for chunk in response.iter_lines():
+        if chunk is None:
+            continue
+        line = chunk.strip()
+        if not line:
+            if event == "final" and data_lines:
+                raw = "\n".join(data_lines)
+                return json.loads(raw)
+            event = None
+            data_lines = []
+            continue
+        if line.startswith("event:"):
+            event = line[6:].strip()
+        elif line.startswith("data:"):
+            data_lines.append(line[5:].strip())
+    if event == "final" and data_lines:
+        return json.loads("\n".join(data_lines))
+    return None

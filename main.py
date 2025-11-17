@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import multiprocessing
 import os
 import sys
@@ -14,7 +15,7 @@ import webbrowser
 from http.client import HTTPConnection
 from typing import Sequence
 
-
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "true")
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="T.O.M. entry point",
@@ -233,4 +234,3 @@ def main(argv: Sequence[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
-import logging

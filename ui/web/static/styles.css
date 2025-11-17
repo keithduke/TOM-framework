@@ -155,11 +155,20 @@ body {
     color: #eed891;
 }
 
+.streaming-temp {
+    opacity: 0.85;
+    border-style: dashed;
+}
+
 .message-heading {
     font-size: 0.8rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--muted);
+}
+
+.message-body {
+    white-space: pre-wrap;
 }
 
 .thinking-block {

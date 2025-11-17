@@ -4,6 +4,7 @@ const state = {
 };
 
 const els = {};
+const streamNodes = {};
 
 document.addEventListener("DOMContentLoaded", () => {
   cacheElements();
@@ -72,29 +73,54 @@ async function handleSend() {
   }
   showError("");
   setLoading(true);
+  clearStreamingMarkers();
 
   try {
     const session = await ensureSession();
-    const payload = {
-      content: message,
-      run_tools: els.runTools.checked,
-    };
-    const response = await apiFetch(
-      `/sessions/${session.session_id}/chat`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-      },
-    );
-    state.session = response.session;
-    updateSessionMeta(response.session);
     els.messageInput.value = "";
-    renderConversation(response.session.messages, response);
+    await streamChat(session.session_id, message, els.runTools.checked);
   } catch (err) {
     showError(err.message || "Request failed");
   } finally {
     setLoading(false);
   }
+}
+
+async function streamChat(sessionId, content, runTools) {
+  const payload = {
+    content,
+    run_tools: runTools,
+  };
+
+  const response = await fetch(`/sessions/${sessionId}/chat/stream`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload),
+  });
+
+  if (response.status === 404) {
+    const fallback = await apiFetch(
+      `/sessions/${sessionId}/chat`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+    applyChatResponse(fallback);
+    return;
+  }
+
+  if (!response.ok || !response.body) {
+    throw new Error("Streaming request failed");
+  }
+
+  await readSseStream(response.body, handleStreamEvent);
+}
+
+function applyChatResponse(data) {
+  state.session = data.session;
+  updateSessionMeta(data.session);
+  renderConversation(data.session.messages, data);
 }
 
 function updateSessionMeta(session = null) {
@@ -188,6 +214,7 @@ function buildMessageNode(role, content) {
   heading.textContent = normalizedRole;
 
   const body = document.createElement("div");
+  body.className = "message-body";
   body.textContent = content;
 
   div.appendChild(heading);
@@ -209,6 +236,172 @@ function setLoading(loading) {
   state.loading = loading;
   const button = els.chatForm.querySelector("button[type=submit]");
   button.disabled = loading;
+}
+
+async function readSseStream(body, onEvent) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      buffer += decoder.decode();
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+
+    let boundary;
+    while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+      const chunk = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      if (!chunk.trim()) {
+        continue;
+      }
+
+      const lines = chunk.split("\n");
+      let event = "message";
+      const dataLines = [];
+
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          event = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          dataLines.push(line.slice(5).trim());
+        }
+      }
+
+      if (dataLines.length) {
+        const raw = dataLines.join("\n");
+        let payload;
+        try {
+          payload = JSON.parse(raw);
+        } catch {
+          payload = { content: raw };
+        }
+        onEvent(event, payload);
+      }
+    }
+  }
+
+  if (buffer.trim()) {
+    const lines = buffer.split("\n");
+    let event = "message";
+    const dataLines = [];
+    for (const line of lines) {
+      if (line.startsWith("event:")) {
+        event = line.slice(6).trim();
+      } else if (line.startsWith("data:")) {
+        dataLines.push(line.slice(5).trim());
+      }
+    }
+    if (dataLines.length) {
+      const raw = dataLines.join("\n");
+      let payload;
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        payload = { content: raw };
+      }
+      onEvent(event, payload);
+    }
+  }
+}
+
+function handleStreamEvent(event, payload) {
+  switch (event) {
+    case "thinking": {
+      const text = payload.delta || payload.content || "";
+      if (text) {
+        appendStreamingText("thinking", text, "thinking", { prefix: "💭 " });
+      }
+      break;
+    }
+    case "tool_call": {
+      const name = payload.name || "tool";
+      appendStreamingBlock("tool", `Running ${name}…`, "tool");
+      break;
+    }
+    case "tool_result": {
+      const name = payload.name || "tool";
+      const output = payload.output || "";
+      appendStreamingBlock("tool", `${name}\n${output}`, "tool");
+      break;
+    }
+    case "assistant": {
+      const text = payload.delta || payload.content || "";
+      if (text) {
+        const cls = payload.final ? "assistant-final" : "assistant-draft";
+        appendStreamingText("assistant", text, cls, { prefix: "T.O.M.: " });
+      }
+      if (payload.final) {
+        delete streamNodes.assistant;
+      }
+      break;
+    }
+    case "final": {
+      if (payload.session) {
+        state.session = payload.session;
+        updateSessionMeta(payload.session);
+        clearStreamingMarkers();
+        renderConversation(payload.session.messages, {
+          thinking: payload.thinking,
+          response: payload.response,
+          tool_calls: payload.tool_calls,
+        });
+      }
+      break;
+    }
+    case "error":
+      showError(payload.message || "Server error");
+      break;
+    default:
+      break;
+  }
+}
+
+function appendStreamingBlock(role, content, extraClass) {
+  if (!content) {
+    return;
+  }
+  const node = buildMessageNode(role, content);
+  node.classList.add("streaming-temp");
+  if (extraClass) {
+    node.classList.add(extraClass);
+  }
+  els.conversation.appendChild(node);
+  els.conversation.scrollTop = els.conversation.scrollHeight;
+}
+
+function appendStreamingText(role, text, extraClass, options = {}) {
+  if (!text) {
+    return;
+  }
+  let node = streamNodes[role];
+  if (!node) {
+    node = buildMessageNode(role, "");
+    node.classList.add("streaming-temp");
+    if (extraClass) {
+      node.classList.add(extraClass);
+    }
+    const bodyEl = node.querySelector(".message-body") || node;
+    if (options.prefix) {
+      bodyEl.textContent = options.prefix;
+    }
+    els.conversation.appendChild(node);
+    streamNodes[role] = node;
+  }
+  const body = node.querySelector(".message-body") || node;
+  body.textContent += text;
+  els.conversation.scrollTop = els.conversation.scrollHeight;
+}
+
+function clearStreamingMarkers() {
+  const temps = els.conversation.querySelectorAll(".streaming-temp");
+  temps.forEach((node) => node.remove());
+  for (const key of Object.keys(streamNodes)) {
+    delete streamNodes[key];
+  }
 }
 
 async function apiFetch(path, options = {}) {

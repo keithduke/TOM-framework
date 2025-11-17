@@ -5,6 +5,7 @@ Wraps CLI in dedicated window with system tray
 FIXED: Output filtering and color support
 """
 
+import json
 import os
 import sys
 import signal
@@ -27,6 +28,7 @@ from PySide6.QtCore import Qt, Signal, Slot, QTimer, QThreadPool, QRunnable, QOb
 class WorkerSignals(QObject):
     success = Signal(object)
     error = Signal(str)
+    progress = Signal(object)
 
 
 class ApiWorker(QRunnable):
@@ -39,7 +41,9 @@ class ApiWorker(QRunnable):
 
     def run(self):
         try:
-            result = self.fn(*self.args, **self.kwargs)
+            call_kwargs = dict(self.kwargs)
+            call_kwargs.setdefault("signals", self.signals)
+            result = self.fn(*self.args, **call_kwargs)
         except Exception as exc:
             self.signals.error.emit(str(exc))
         else:
@@ -120,6 +124,7 @@ class TerminalWindow(QMainWindow):
         self.session_id: Optional[str] = None
         self.thread_pool = QThreadPool.globalInstance()
         self.pending_request = False
+        self.stream_state = {"thinking": False, "assistant": False}
         
         self._setup_ui()
         self._setup_colors()
@@ -190,6 +195,14 @@ class TerminalWindow(QMainWindow):
         
         main_widget.setLayout(layout)
         self.setCentralWidget(main_widget)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self._focus_input)
+
+    def _focus_input(self):
+        if self.input_field:
+            self.input_field.setFocus(Qt.OtherFocusReason)
     
     def _setup_colors(self):
         """Setup text format colors (proper PySide6 approach)"""
@@ -244,6 +257,8 @@ class TerminalWindow(QMainWindow):
             return
         
         self.input_field.clear()
+
+        self._focus_input()
         
         # Echo input
         self._append_text(f"\nYou> {text}\n", 'user')
@@ -253,27 +268,88 @@ class TerminalWindow(QMainWindow):
             return
         
         self.pending_request = True
-        self.input_field.setEnabled(False)
+        self.stream_state = {"thinking": False, "assistant": False}
         self.status_bar.set_status("Waiting...", "#ffc107")
         
         worker = ApiWorker(self._chat_with_api, text)
         worker.signals.success.connect(self._handle_chat_success)
         worker.signals.error.connect(self._handle_chat_error)
+        worker.signals.progress.connect(self._handle_chat_stream_event)
         self.thread_pool.start(worker)
     
-    def _chat_with_api(self, text: str):
+    def _chat_with_api(self, text: str, signals: WorkerSignals | None = None):
         assert self.client and self.session_id
         payload = {"content": text, "run_tools": True}
+        stream_url = f"/sessions/{self.session_id}/chat/stream"
+        try:
+            with self.client.stream("POST", stream_url, json=payload, timeout=None) as resp:
+                if resp.status_code == 404:
+                    raise httpx.HTTPStatusError(
+                        "stream not available", request=resp.request, response=resp
+                    )
+                resp.raise_for_status()
+                return self._consume_streaming_response(resp, signals)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
         resp = self.client.post(f"/sessions/{self.session_id}/chat", json=payload, timeout=None)
         resp.raise_for_status()
         return resp.json()
+
+    def _consume_streaming_response(self, response: httpx.Response, signals: WorkerSignals | None):
+        final_payload = None
+        for event in self._iter_sse_events(response):
+            if signals:
+                signals.progress.emit(event)
+            if event["event"] == "final":
+                final_payload = event["data"]
+        return final_payload or {}
+
+    def _iter_sse_events(self, response: httpx.Response):
+        event_name = "message"
+        data_lines: list[str] = []
+
+        for chunk in response.iter_lines():
+            if chunk is None:
+                continue
+            line = chunk.strip()
+            if not line:
+                if data_lines:
+                    payload = "\n".join(data_lines)
+                    try:
+                        data = json.loads(payload)
+                    except json.JSONDecodeError:
+                        data = {"content": payload}
+                    yield {"event": event_name, "data": data}
+                event_name = "message"
+                data_lines = []
+                continue
+
+            if line.startswith("event:"):
+                event_name = line[6:].strip()
+            elif line.startswith("data:"):
+                data_lines.append(line[5:].strip())
+
+        if data_lines:
+            payload = "\n".join(data_lines)
+            try:
+                data = json.loads(payload)
+            except json.JSONDecodeError:
+                data = {"content": payload}
+            yield {"event": event_name, "data": data}
     
     def _handle_chat_success(self, data: dict):
         self.pending_request = False
-        self.input_field.setEnabled(True)
         self.status_bar.set_status("Connected", "#4ec9b0")
+        self._focus_input()
         
         session = data.get("session")
+        if session:
+            self.session_id = session.get("session_id", self.session_id)
+
+        if data.get("streaming"):
+            return
+
         if session:
             self._append_text("", 'default')  # ensure cursor at end
         thinking = data.get("thinking", "").strip()
@@ -293,9 +369,62 @@ class TerminalWindow(QMainWindow):
     
     def _handle_chat_error(self, message: str):
         self.pending_request = False
-        self.input_field.setEnabled(True)
         self.status_bar.set_status("Error", "#f48771")
         self._append_text(f"\nError: {message}\n", 'error')
+        self._focus_input()
+
+    @Slot(object)
+    def _handle_chat_stream_event(self, payload: dict):
+        event = payload.get("event")
+        data = payload.get("data", {})
+        if event == "thinking":
+            delta = data.get("delta") or data.get("content", "")
+            if not delta:
+                return
+            if not self.stream_state["thinking"]:
+                self._append_text("\n💭 ", 'thinking')
+                self.stream_state["thinking"] = True
+            self._append_text(delta, 'thinking')
+            if data.get("complete"):
+                self._append_text("\n", 'thinking')
+                self.stream_state["thinking"] = False
+        elif event == "tool_call":
+            name = data.get("name", "tool")
+            self._append_text(f"\n🔧 Tool call: {name}\n", 'tool')
+        elif event == "tool_result":
+            name = data.get("name", "tool")
+            output = data.get("output", "")
+            self._append_text(f"\n🔧 {name}\n", 'tool')
+            if output:
+                self._append_text(f"{output}\n", 'tool')
+        elif event == "assistant":
+            delta = data.get("delta") or ""
+            final_flag = data.get("final")
+            printed_direct = False
+
+            if delta:
+                if not self.stream_state["assistant"]:
+                    self._append_text("\nT.O.M.: ", 'assistant')
+                    self.stream_state["assistant"] = True
+                self._append_text(delta, 'assistant')
+            elif final_flag and not self.stream_state["assistant"]:
+                content = data.get("content", "")
+                if content:
+                    self._append_text("\nT.O.M.: ", 'assistant')
+                    self._append_text(content, 'assistant')
+                    printed_direct = True
+
+            if final_flag:
+                if self.stream_state["assistant"]:
+                    self._append_text("\n", 'assistant')
+                    self.stream_state["assistant"] = False
+                elif printed_direct:
+                    self._append_text("\n", 'assistant')
+        elif event == "final":
+            session = data.get("session")
+            if session:
+                self.session_id = session.get("session_id", self.session_id)
+            self.stream_state = {"thinking": False, "assistant": False}
     
     def _append_text(self, text, format_name='default'):
         """Append text with proper color formatting"""

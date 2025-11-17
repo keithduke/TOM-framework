@@ -32,16 +32,17 @@ tom/
 ## Current Status
 
 - `core/` hosts all orchestration logic; CLI and PySide load it via `ui/`.
-- `services/api` exposes health/session/chat endpoints (local-only, no auth) and serves the static web client.
+- `services/api` exposes health/session/chat endpoints (local-only, no auth) and serves the static web client plus an SSE `/chat/stream` endpoint.
 - `python main.py` now boots the FastAPI server and opens the browser, so the web UI is the default experience.
 - Running `python main.py --cli` automatically starts the local API (unless `--api-base` is provided) and points the CLI at it.
 - PySide6 launcher (`--pyside` or legacy `launcher.py`) likewise spins up/attaches to the API and mirrors tool/thinking output.
+- CLI, PySide6, and web clients all consume the SSE stream for live thinking/tool/status updates.
 
 ## Next Steps
 
-- Implement streaming (`/chat/stream` SSE) so CLI, PySide, and web share a consistent real-time contract.
 - Continue evolving `ui/web/` (session list, cache stats, prompt/tool inspectors) to reach CLI feature parity.
 - Add lightweight ops polish (metrics, structured logs, optional auth when binding beyond localhost).
+- Evaluate token-level streaming support once MLX exposes incremental decoding APIs, then light up partial text in all adapters.
 ## UI Launch Strategy
 
 - `python main.py` (default) spins up the local FastAPI server + serves the web UI. Everything stays on-device, but the browser is now the primary entry point.

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
+from typing import Iterator
+
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import StreamingResponse
 
 from .runtime import ApiRuntime, SessionData
 from .schemas import (
@@ -87,6 +91,26 @@ def build_router(runtime: ApiRuntime) -> APIRouter:
                 tool_calls=turn.tool_calls,
             )
 
+    @router.post("/sessions/{session_id}/chat/stream")
+    def stream_chat(session_id: str, payload: ChatRequest):
+        with log_request(
+            "chat_stream",
+            session_id=session_id,
+            extra={"run_tools": payload.run_tools},
+        ):
+            try:
+                session = runtime.get_session(session_id)
+            except KeyError:
+                raise HTTPException(status_code=404, detail="Session not found") from None
+
+            def event_source() -> Iterator[str]:
+                for event in runtime.chat_event_stream(
+                    session, user_message=payload.content, run_tools=payload.run_tools
+                ):
+                    yield _format_sse(event["event"], event["data"])
+
+            return StreamingResponse(event_source(), media_type="text/event-stream")
+
     return router
 
 
@@ -97,3 +121,7 @@ def _serialize_session(session: SessionData) -> SessionState:
         max_context_tokens=session.context.max_context_tokens,
         messages=[{"role": msg["role"], "content": msg["content"]} for msg in session.context.messages],
     )
+
+
+def _format_sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"

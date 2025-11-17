@@ -6,6 +6,17 @@ T.O.M. is a **local-first** AI assistant: every component (MLX runtime, FastAPI 
 
 ---
 
+## What's New (Sprint 1)
+
+- **API-first runtime:** `services/api` now owns orchestration while every adapter (CLI, PySide6, and the web UI) connects over HTTP + SSE for identical behavior.
+- **Unified entry point:** `python main.py` launches the FastAPI server and web UI by default, while `--cli` and `--pyside` reuse the same backend. `launcher.py` simply proxies to PySide mode.
+- **Live streaming everywhere:** CLI, GUI, and web clients subscribe to `/chat/stream`, so thinking/tool events display live without duplicated final responses.
+- **Desktop polish:** The PySide shell keeps the input focused after launch and each turn, mirrors streaming output exactly once, and integrates with the system tray.
+- **Web client stability:** The browser UI handles incremental streaming safely and busts caches so new assets load immediately.
+- **Tokenizers tuning:** `main.py` sets `TOKENIZERS_PARALLELISM=true` before any workers spawn, eliminating Hugging Face fork warnings without throttling throughput.
+
+---
+
 ## Installation
 
 ### Prerequisites
@@ -74,9 +85,9 @@ python -m mlx_lm.convert \
 
 `main.py` is now the single entry point for every adapter:
 
-- **Default** – `python main.py` starts the FastAPI service on `http://127.0.0.1:8000` and opens the new web UI at `/web/`.
+- **Default** – `python main.py` starts the FastAPI service on `http://127.0.0.1:8000`, serves the static client at `/web/`, and opens your browser automatically.
 - **CLI** – `python main.py --cli` runs the original terminal client (all CLI flags still apply, e.g. `python main.py --cli --model ./Qwen3-4B`).
-- **PySide desktop** – `python main.py --pyside` spins up the API server in the background and launches the Qt GUI.
+- **PySide desktop** – `python main.py --pyside` spins up the API server in the background and launches the Qt GUI with tray integration and always-focused input.
 - **Legacy launcher** – `python launcher.py` continues to work but now simply proxies to `python main.py --pyside`.
 
 This keeps every workflow on the same code path: FastAPI owns orchestration, and each UI is just a thin adapter layered on top.
@@ -89,9 +100,10 @@ T.O.M. keeps three presentation layers in sync via the FastAPI backend:
 
 - **Web UI (default)**: `python main.py` starts the API and opens the browser at `http://127.0.0.1:8000/web/`. Chat, inspect tool calls, and monitor thinking directly in the browser.
 - **Terminal CLI**: `python main.py --cli [extra CLI flags]` launches the original prompt-toolkit experience. Main automatically hosts the FastAPI backend (unless `--api-base`/`TOM_API_BASE` is provided), so the CLI shares the same runtime as PySide/web. For legacy direct-core mode, run `python ui/cli/main.py` explicitly.
-- **PySide6 desktop shell**: `python main.py --pyside` runs the Qt window with tray integration while transparently hosting the API in the background. The legacy `python launcher.py` command simply forwards to this mode.
+- **PySide6 desktop shell**: `python main.py --pyside` runs the Qt window with tray integration while transparently hosting the API in the background. Input focus stays in the composer after the app launches and after every turn, so you can continue typing immediately. The legacy `python launcher.py` command simply forwards to this mode.
 
 Every adapter shares the same cache, model runtime, and tooling—they only differ in UI.
+All of them now listen to the FastAPI server’s SSE stream so “thinking”, tool calls, and final responses appear live while a turn is executing.
 
 ### PySide (Desktop) Features
 
@@ -117,6 +129,7 @@ When using `python main.py --pyside` (or the compatibility `launcher.py`), you g
 - **Syntax highlighting**: Color-coded output (thinking, errors, responses)
 - **Status bar**: Real-time connection status indicator
 - **Styled input**: Prominent input field with focus indication
+- **Always-ready input**: Composer keeps focus after launch and after each response.
 
 ### Interactive Interface (Both Modes)
 
@@ -197,6 +210,26 @@ T.O.M. can autonomously use tools to extend its capabilities:
 
 **`read`**
 - Reads content from files on your system
+
+---
+
+## Testing
+
+Before opening a PR (and after large refactors), verify the following:
+
+1. `pytest -q` – exercises API/CLI integration, prompt construction, and tool execution with the stubbed model manager.
+2. `python main.py` – confirms the FastAPI server boots, the browser UI streams responses (including tool calls), and no console errors appear.
+3. `python main.py --cli` – validates the terminal UI against the shared API server (try a tool call and a non-tool question to confirm no duplicate assistant output).
+4. `python main.py --pyside` – ensures the desktop shell launches, the input remains focused after each prompt, and SSE streaming mirrors the CLI/web behavior.
+
+Document any deviations plus logs/screenshots in your PR so reviewers can reproduce issues quickly.
+
+## Troubleshooting
+
+- **“huggingface/tokenizers: The current process just got forked…”** – `main.py` now sets `TOKENIZERS_PARALLELISM=true` before spawning any workers, so the warning should be gone when you use the standard entry points. If you embed the runtime elsewhere, export `TOKENIZERS_PARALLELISM=true` yourself before forking.
+- **Web client shows stale JavaScript** – Hard-refresh the browser or bump the cache-busting query (`/web/app.js?v=…`) if you tweak static assets while the server is running.
+- **Duplicate assistant replies** – All adapters now deduplicate SSE `assistant` events. If you observe repeats, confirm you are hitting `/chat/stream` and aren’t replaying cached responses.
+- **PySide input loses focus** – The composer auto-focuses after launch and every submission. If it doesn’t, ensure you’re on the latest code and no global Qt shortcut is stealing focus.
 - Supports text files up to 10MB
 - Handles UTF-8 encoded files
 - Example: "Can you read the file at ./config.py?"

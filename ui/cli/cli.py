@@ -103,6 +103,7 @@ class ChatInterface:
         self.api_client: Optional[httpx.Client] = None
         self.api_session_id: Optional[str] = None
         self.api_headers = {"X-TOM-API-Key": api_key} if api_key else None
+        self._api_stream_flags = {"thinking_open": False, "assistant_open": False}
         
         model_max_context = DEFAULT_MODEL_MAX_CONTEXT
         if self.model_path.exists():
@@ -137,6 +138,8 @@ class ChatInterface:
             )
         else:
             logger.info("API mode enabled; deferring to remote FastAPI backend.")
+            logging.getLogger("httpx").setLevel(logging.WARNING)
+            logging.getLogger("httpcore").setLevel(logging.WARNING)
         
         # Setup prompt session
         self.prompt_session = PromptSession(
@@ -472,11 +475,40 @@ class ChatInterface:
         if not self.api_client or not self.api_session_id:
             console.print("[red]API session not initialized[/red]")
             return
-        
+        self._api_stream_flags = {"thinking_open": False, "assistant_open": False}
+        payload = {"content": user_input, "run_tools": True}
+        stream_url = f"/sessions/{self.api_session_id}/chat/stream"
+        try:
+            with self.api_client.stream(
+                "POST", stream_url, json=payload, timeout=None
+            ) as resp:
+                if resp.status_code == 404:
+                    raise httpx.HTTPStatusError(
+                        "stream route unavailable", request=resp.request, response=resp
+                    )
+                resp.raise_for_status()
+                self._consume_api_stream(resp)
+                return
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                console.print(f"[red]API stream error: {exc}[/red]")
+                return
+            # fall back to legacy endpoint
+        except httpx.HTTPError as exc:
+            console.print(f"[red]API error: {exc}[/red]")
+            return
+
+        self._send_api_message_legacy(payload)
+        self._api_stream_flags = {"thinking_open": False, "assistant_open": False}
+
+    def _send_api_message_legacy(self, payload: dict):
+        if not self.api_client or not self.api_session_id:
+            return
+
         try:
             resp = self.api_client.post(
                 f"/sessions/{self.api_session_id}/chat",
-                json={"content": user_input, "run_tools": True},
+                json=payload,
                 timeout=60,
             )
             resp.raise_for_status()
@@ -500,6 +532,88 @@ class ChatInterface:
         response_text = data.get("response", "").strip()
         if response_text:
             console.print(f"\n[bold cyan]T.O.M.[/bold cyan]: {response_text}")
+
+    def _consume_api_stream(self, response: httpx.Response):
+        """Parse the SSE response from the streaming endpoint."""
+        buffer_event = "message"
+        data_lines: list[str] = []
+
+        for line in response.iter_lines():
+            if line is None:
+                continue
+            text = line.strip()
+            if not text:
+                if data_lines:
+                    payload = "\n".join(data_lines)
+                    self._dispatch_api_event(buffer_event, payload)
+                buffer_event = "message"
+                data_lines = []
+                continue
+
+            if text.startswith("event:"):
+                buffer_event = text[6:].strip()
+            elif text.startswith("data:"):
+                data_lines.append(text[5:].strip())
+
+        if data_lines:
+            payload = "\n".join(data_lines)
+            self._dispatch_api_event(buffer_event, payload)
+
+    def _dispatch_api_event(self, event: str, raw_payload: str):
+        try:
+            payload = json.loads(raw_payload)
+        except json.JSONDecodeError:
+            payload = {"content": raw_payload}
+
+        if event == "thinking":
+            delta = payload.get("delta") or payload.get("content", "")
+            if not delta:
+                return
+            if not self._api_stream_flags.get("thinking_open"):
+                console.print("\n[dim italic]💭 Thinking:[/dim italic] ", end="")
+                self._api_stream_flags["thinking_open"] = True
+            print(delta, end="", flush=True)
+            if payload.get("complete") and self._api_stream_flags.get("thinking_open"):
+                print()
+                self._api_stream_flags["thinking_open"] = False
+        elif event == "tool_call":
+            name = payload.get("name", "tool")
+            console.print(f"\n[magenta]Tool call: {name}[/magenta]")
+        elif event == "tool_result":
+            name = payload.get("name", "tool")
+            output = payload.get("output", "")
+            console.print(f"\n[magenta]Tool result: {name}[/magenta]")
+            console.print(Panel(output, border_style="magenta"))
+        elif event == "assistant":
+            delta = payload.get("delta") or ""
+            final_flag = payload.get("final")
+            printed_direct = False
+
+            if delta:
+                if not self._api_stream_flags.get("assistant_open"):
+                    console.print("\n[bold cyan]T.O.M.[/bold cyan]: ", end="")
+                    self._api_stream_flags["assistant_open"] = True
+                print(delta, end="", flush=True)
+            elif final_flag and not self._api_stream_flags.get("assistant_open"):
+                content = payload.get("content", "")
+                if content:
+                    console.print("\n[bold cyan]T.O.M.[/bold cyan]: ", end="")
+                    print(content, end="", flush=True)
+                    printed_direct = True
+
+            if final_flag:
+                if self._api_stream_flags.get("assistant_open"):
+                    print()
+                    self._api_stream_flags["assistant_open"] = False
+                elif printed_direct:
+                    print()
+        elif event == "final":
+            session = payload.get("session")
+            if session:
+                self._sync_context_from_session(session)
+            self._api_stream_flags = {"thinking_open": False, "assistant_open": False}
+        elif event == "error":
+            console.print(f"\n[red]API error: {payload.get('message', raw_payload)}[/red]")
     
     def _show_help(self):
         """Display help"""
