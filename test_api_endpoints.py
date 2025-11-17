@@ -100,13 +100,8 @@ def test_session_and_chat_flow(api_client: TestClient):
     assert delete.status_code == 204
 
 
-def test_api_key_enforcement(monkeypatch, api_client: TestClient):
-    from services.api import auth
-
-    monkeypatch.setattr(auth, "API_KEY", "secret")
-
+def test_local_only_mode(monkeypatch, api_client: TestClient):
     resp = api_client.get("/health")
-    assert resp.status_code == 401
-
-    resp = api_client.get("/health", headers={"X-TOM-API-Key": "secret"})
     assert resp.status_code == 200
+    body = resp.json()
+    assert "status" in body and "model_path" in body

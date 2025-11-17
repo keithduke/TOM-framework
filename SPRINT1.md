@@ -32,19 +32,19 @@ tom/
 ## Current Status
 
 - `core/` hosts all orchestration logic; CLI and PySide load it via `ui/`.
-- `services/api` exposes health/session/chat endpoints with API-key auth + telemetry.
-- CLI can run in local mode (default) or proxy through the API via `--api-base/--api-key`.
-- PySide6 launcher now talks directly to the API and mirrors tool/thinking output.
-- `python main.py` still launches the CLI for now; `--cli`/`--pyside` flags keep explicit modes until the web UI is ready.
+- `services/api` exposes health/session/chat endpoints (local-only, no auth) and serves the static web client.
+- `python main.py` now boots the FastAPI server and opens the browser, so the web UI is the default experience.
+- Running `python main.py --cli` automatically starts the local API (unless `--api-base` is provided) and points the CLI at it.
+- PySide6 launcher (`--pyside` or legacy `launcher.py`) likewise spins up/attaches to the API and mirrors tool/thinking output.
 
 ## Next Steps
 
-- Make `python main.py` start the FastAPI server + serve the upcoming web client by default.
-- Implement `ui/web/` (vanilla HTML/CSS/JS) on top of the existing API contract.
-- Add lightweight ops polish (metrics, structured logs, auth UX) once all adapters share the backend.
+- Implement streaming (`/chat/stream` SSE) so CLI, PySide, and web share a consistent real-time contract.
+- Continue evolving `ui/web/` (session list, cache stats, prompt/tool inspectors) to reach CLI feature parity.
+- Add lightweight ops polish (metrics, structured logs, optional auth when binding beyond localhost).
 ## UI Launch Strategy
 
-- `python main.py` (default) will evolve into the local FastAPI server + web UI launcher once Phase 3 lands. It keeps everything local-only but provides a single entry point for the browser experience.
-- `python main.py --cli` keeps the classic terminal workflow. Today it can run in direct-core mode; once the API is fully hardened it will default to calling the local API (`--api-base` flag) so the CLI, PySide, and web clients all share the same runtime.
-- `python main.py --pyside` launches the desktop shell. Like the CLI, it will transition to API-backed calls so every UI is just an adapter over the shared engine.
+- `python main.py` (default) spins up the local FastAPI server + serves the web UI. Everything stays on-device, but the browser is now the primary entry point.
+- `python main.py --cli` keeps the classic terminal workflow while defaulting to the local API (set `--api-base` or `TOM_API_BASE` to target a remote backend, or call `ui/cli/main.py` directly for legacy direct-core mode).
+- `python main.py --pyside` launches the desktop shell and proxies through the API; legacy `launcher.py` remains for shortcuts/scripts.
 - All three adapters live under `ui/` and remain thin; `core/` plus `services/api/` own the business logic, tool execution, and cache management.

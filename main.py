@@ -112,6 +112,12 @@ def _run_api_server(host: str, port: int, reload: bool, open_browser: bool) -> i
         reload=reload,
         log_level="info",
     )
+    if not reload:
+        # Mute uvicorn access logs when running in embedded/CLI modes to avoid
+        # duplicating HTTP traces in the terminal UI. When --reload is enabled
+        # we keep the default logging so developers can see traffic clearly.
+        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
     server = uvicorn.Server(config)
     try:
         return server.run()
@@ -126,6 +132,50 @@ def _run_cli(forwarded_args: Sequence[str]) -> None:
     from ui.cli.main import main as cli_main
 
     cli_main(list(forwarded_args))
+
+
+def _has_cli_subcommand(args: Sequence[str], command: str) -> bool:
+    return any(token == command for token in args)
+
+
+def _has_flag(args: Sequence[str], flags: set[str]) -> bool:
+    return any(token in flags for token in args)
+
+
+def _has_arg(args: Sequence[str], flag: str) -> bool:
+    for token in args:
+        if token == flag or token.startswith(f"{flag}="):
+            return True
+    return False
+
+
+def _run_cli_mode(host: str, port: int, reload: bool, forwarded_args: Sequence[str]) -> None:
+    """Start the API if needed, then launch the CLI."""
+    should_skip_server = (
+        _has_cli_subcommand(forwarded_args, "clear-cache")
+        or _has_arg(forwarded_args, "--api-base")
+        or _has_flag(forwarded_args, {"-h", "--help"})
+        or os.getenv("TOM_API_BASE")
+    )
+
+    server_proc: multiprocessing.Process | None = None
+    public_host = host if host not in {"0.0.0.0", "::"} else "127.0.0.1"
+    if not should_skip_server:
+        os.environ.setdefault("TOM_API_BASE", f"http://{public_host}:{port}")
+        server_proc = multiprocessing.Process(
+            target=_run_api_server,
+            args=(host, port, reload, False),
+            daemon=True,
+        )
+        server_proc.start()
+        _wait_for_server(public_host, port)
+
+    try:
+        _run_cli(forwarded_args)
+    finally:
+        if server_proc:
+            server_proc.terminate()
+            server_proc.join(timeout=5)
 
 
 def _launch_pyside_ui() -> None:
@@ -164,7 +214,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         parser.error("Choose either --cli or --pyside, not both.")
 
     if args.cli:
-        _run_cli(remainder)
+        _run_cli_mode(args.host, args.port, args.reload, remainder)
         return
     if args.pyside:
         _run_pyside_mode(args.host, args.port, args.reload)
@@ -183,3 +233,4 @@ def main(argv: Sequence[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
+import logging

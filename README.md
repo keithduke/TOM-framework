@@ -88,7 +88,7 @@ This keeps every workflow on the same code path: FastAPI owns orchestration, and
 T.O.M. keeps three presentation layers in sync via the FastAPI backend:
 
 - **Web UI (default)**: `python main.py` starts the API and opens the browser at `http://127.0.0.1:8000/web/`. Chat, inspect tool calls, and monitor thinking directly in the browser.
-- **Terminal CLI**: `python main.py --cli [extra CLI flags]` launches the original prompt-toolkit experience. Ideal for power users who want raw terminal control, scripting, or multiplexing sessions.
+- **Terminal CLI**: `python main.py --cli [extra CLI flags]` launches the original prompt-toolkit experience. Main automatically hosts the FastAPI backend (unless `--api-base`/`TOM_API_BASE` is provided), so the CLI shares the same runtime as PySide/web. For legacy direct-core mode, run `python ui/cli/main.py` explicitly.
 - **PySide6 desktop shell**: `python main.py --pyside` runs the Qt window with tray integration while transparently hosting the API in the background. The legacy `python launcher.py` command simply forwards to this mode.
 
 Every adapter shares the same cache, model runtime, and tooling—they only differ in UI.
