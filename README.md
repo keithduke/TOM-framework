@@ -1,4 +1,4 @@
-# T.O.M. CLI
+# T.O.M.
 
 **T**erminal **O**rchestrated **M**odel - A production-ready agentic framework built on Qwen3-4B-Thinking-2507 with MLX optimization for Apple Silicon.
 
