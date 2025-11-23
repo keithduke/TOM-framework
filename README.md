@@ -17,6 +17,19 @@ T.O.M. is a **local-first** AI assistant: every component (MLX runtime, FastAPI 
 
 ---
 
+## Security
+
+TOM is designed with security in mind:
+
+- **Local-only processing**: No data leaves your device
+- **Path validation**: File reading restricted to allowed directories
+- **Sensitive file blocking**: Automatically prevents reading credentials
+- **Secure defaults**: All APIs bind to localhost only
+
+See [SECURITY.md](SECURITY.md) for detailed security information.
+
+---
+
 ## Installation
 
 ### Prerequisites

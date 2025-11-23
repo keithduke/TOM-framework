@@ -5,7 +5,7 @@ FIXED: Tool persistence across multi-turn conversations
 
 import json
 import logging
-from typing import Dict, List
+from typing import Any, Dict, List, cast
 
 from .config import DEFAULT_SYSTEM_PROMPT
 from .tools import TOOLS_DEFINITIONS
@@ -54,7 +54,7 @@ class ContextManager:
     - Prompt construction with chat templates
     """
     
-    def __init__(self, max_context_tokens: int, tokenizer=None):
+    def __init__(self, max_context_tokens: int, tokenizer: Any = None):
         self.max_context_tokens = max_context_tokens
         self.tokenizer = tokenizer
         self.messages: List[Dict[str, str]] = []
@@ -62,7 +62,7 @@ class ContextManager:
         
         logger.debug(f"ContextManager initialized with max {max_context_tokens:,} tokens")
     
-    def set_tokenizer(self, tokenizer):
+    def set_tokenizer(self, tokenizer: Any) -> None:
         """Set tokenizer for accurate token counting"""
         self.tokenizer = tokenizer
         logger.debug("Tokenizer set for accurate token counting")
@@ -135,7 +135,7 @@ class ContextManager:
         total = system_tokens + message_tokens + tools_tokens
         return total
     
-    def build_prompt(self, tokenizer, include_tools: bool = False) -> str:
+    def build_prompt(self, tokenizer: Any, include_tools: bool = False) -> str:
         """
         Build the complete prompt using the tokenizer's chat template when
         available, otherwise fall back to a deterministic handcrafted format.
@@ -145,7 +145,7 @@ class ContextManager:
 
         if tokenizer and hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
             try:
-                kwargs = {"tokenize": False, "add_generation_prompt": True}
+                kwargs: Dict[str, Any] = {"tokenize": False, "add_generation_prompt": True}
                 if include_tools and TOOLS_DEFINITIONS:
                     kwargs["tools"] = TOOLS_DEFINITIONS
 
@@ -181,7 +181,7 @@ class ContextManager:
         self,
         chat_messages: List[Dict[str, str]],
         include_tools: bool,
-    ) -> str:
+    ): # -> str
         """Construct prompt manually so tools are honored regardless of tokenizer."""
         parts: List[str] = []
 
@@ -190,7 +190,7 @@ class ContextManager:
             chat_messages = chat_messages[1:]
 
         if include_tools and TOOLS_DEFINITIONS:
-            tools_str = json.dumps(TOOLS_DEFINITIONS, indent=2)
+            tools_str: str = json.dumps(TOOLS_DEFINITIONS, indent=2)
             parts.append(f"Available Tools:\n{tools_str}\n")
 
         for msg in chat_messages:
@@ -206,9 +206,9 @@ class ContextManager:
                 parts.append(f"User:\n{content}")
 
         parts.append("Assistant:")
-        return "\n\n".join(parts)
+        return cast(str, "\n\n".join(parts))
     
-    def get_stats(self) -> Dict[str, any]:
+    def get_stats(self) -> Dict[str, Any]:
         """Get context statistics for monitoring"""
         total_tokens = self._count_total_tokens()
         msg_count = len(self.messages)
@@ -222,7 +222,7 @@ class ContextManager:
         
         return stats
     
-    def clear_messages(self):
+    def clear_messages(self) -> None:
         """Clear all messages while keeping system prompt"""
         self.messages.clear()
         logger.info("Context cleared")

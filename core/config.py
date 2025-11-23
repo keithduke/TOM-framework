@@ -20,8 +20,15 @@ MAX_TOOL_RESULT_TOKENS = 8192
 DEFAULT_GC_FREQUENCY = 3
 LOW_MEMORY_THRESHOLD_GB = 2.0
 
+from pathlib import Path
+
 # File reading limits
 MAX_FILE_SIZE_MB = 10
+READ_ALLOWED_PATHS = [
+    Path.home(),
+    Path.cwd(),
+    Path("/tmp"),
+]
 
 # Streaming configuration
 ENABLE_STREAMING = True  # Set to False to use legacy non-streaming mode

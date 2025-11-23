@@ -37,10 +37,9 @@ from core.config import (
 from core.context_manager import ContextManager, TokenCounter
 from core.model_manager import ModelManager
 from core.tools import (
-    execute_tool_call, 
-    extract_tool_calls, 
+    execute_tool_call,
+    extract_tool_calls,
     strip_tool_calls,
-    truncate_tool_result, 
     TOOLS_DEFINITIONS
 )
 from core.utils import load_model_config
@@ -277,11 +276,9 @@ class ChatInterface:
             for tc in tool_calls:
                 try:
                     result = execute_tool_call(tc)
-                    truncated = truncate_tool_result(
-                        result,
-                        tc["name"],
-                        self.max_tool_result_chars
-                    )
+                    truncated = result
+                    if len(truncated) > self.max_tool_result_chars:
+                        truncated = truncated[: self.max_tool_result_chars] + "…"
 
                     # Add tool result using 'tool' role (Qwen chat template expects this)
                     tool_msg = f"<tool_result name=\"{tc['name']}\">{truncated}</tool_result>"
@@ -387,11 +384,9 @@ class ChatInterface:
             for tc in tool_calls:
                 try:
                     result = execute_tool_call(tc)
-                    truncated = truncate_tool_result(
-                        result,
-                        tc["name"],
-                        self.max_tool_result_chars
-                    )
+                    truncated = result
+                    if len(truncated) > self.max_tool_result_chars:
+                        truncated = truncated[: self.max_tool_result_chars] + "…"
                     tool_msg = f"Tool: {tc['name']}\nResult: {truncated}"
                     self.context_manager.add_message("tool", tool_msg)
                 except Exception as e:

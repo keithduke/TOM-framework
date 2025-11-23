@@ -30,7 +30,7 @@ def load_model_config(model_path: Path) -> Dict[str, Any]:
     
     try:
         with open(config_path, 'r') as f:
-            config = json.load(f)
+            config: Dict[str, Any] = json.load(f)
         
         max_pos = config.get("max_position_embeddings", DEFAULT_MODEL_MAX_CONTEXT)
         logger.info(f"Model max_position_embeddings: {max_pos:,}")

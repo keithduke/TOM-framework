@@ -24,6 +24,8 @@ class PromptCacheManager:
     - Optional quantization for memory efficiency
     """
     
+    cache: Optional[Any] = None
+    
     def __init__(
         self,
         model,
@@ -52,6 +54,7 @@ class PromptCacheManager:
         self.cache_path = Path(cache_path)
         self.kv_bits = kv_bits
         self.kv_group_size = kv_group_size
+        self.max_kv_size: Optional[int]
         
         # Calculate cache size
         if max_kv_size is not None:

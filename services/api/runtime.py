@@ -44,7 +44,7 @@ class ChatTurn:
 class ApiRuntime:
     """Manages sessions and a shared ModelManager instance."""
 
-    def __init__(self, settings: ApiSettings):
+    def __init__(self, settings: ApiSettings) -> None:
         self.settings = settings
         self.sessions: Dict[str, SessionData] = {}
         self._model_manager: Optional[ModelManager] = None

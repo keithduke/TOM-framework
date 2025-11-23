@@ -8,10 +8,15 @@ import re
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from datetime import datetime
+from functools import wraps
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
-from .config import MAX_FILE_SIZE_MB
-from .utils import ordinal
+from core.security import is_path_allowed, is_sensitive_file
+from core.config import MAX_FILE_SIZE_MB, READ_ALLOWED_PATHS
+from core.utils import ordinal
+
 
 logger = logging.getLogger("tom_cli")
 
@@ -23,7 +28,7 @@ TOOLS_DEFINITIONS: List[Dict[str, Any]] = []
 MAX_FILE_CHARS = 15000  # ~3,750 tokens at 4 chars/token
 
 
-def tool(name: str, description: str, parameters: Dict[str, Any] = None):
+def tool(name: str, description: str, parameters: Optional[Dict[str, Any]] = None) -> Callable:
     """Decorator to register tools with optional parameters"""
     def decorator(func: Callable) -> Callable:
         @wraps(func)
@@ -54,7 +59,7 @@ def get_datetime() -> str:
 
 @tool(
     "read", 
-    "Read file content. Returns full file content or error if file is too large.",
+    "Read file content. Returns full file content or error if file is too large or access is denied.",
     parameters={
         "type": "object",
         "properties": {
@@ -65,25 +70,34 @@ def get_datetime() -> str:
 )
 def read_file(location: str) -> str:
     """
-    Read file and return complete contents.
-    Returns error message if file exceeds size limits - NO TRUNCATION.
+    Read file and return complete contents with security checks.
     """
     try:
         file_path = Path(location).expanduser().resolve()
-        
+
+        # Security check: Path allowed?
+        if not is_path_allowed(file_path, allowed_paths=READ_ALLOWED_PATHS):
+            return f"Error: Access denied. Path not in allowed directories: {location}"
+
+        # Security check: Sensitive file?
+        if is_sensitive_file(file_path):
+            logger.warning(f"Attempted to read sensitive file: {file_path}")
+            return f"Error: Cannot read sensitive file: {location}"
+
         if not file_path.exists():
             return f"Error: File not found: {location}"
         if not file_path.is_file():
             return f"Error: Path is not a file: {location}"
-        
+
+        # Existing size checks...
         file_size_mb = file_path.stat().st_size / (1024 * 1024)
         if file_size_mb > MAX_FILE_SIZE_MB:
             return f"Error: File too large ({file_size_mb:.2f} MB). Maximum allowed: {MAX_FILE_SIZE_MB} MB."
-        
+
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
-        
-        # Check character limit
+
+        # Existing character limit check...
         char_count = len(content)
         if char_count > MAX_FILE_CHARS:
             line_count = content.count('\n') + 1
@@ -95,10 +109,10 @@ def read_file(location: str) -> str:
                 f"File is {char_count - MAX_FILE_CHARS:,} characters over the limit.\n"
                 f"Consider reading specific sections or breaking the analysis into parts."
             )
-        
+
         logger.info(f"Read {location}: {char_count:,} chars ({file_size_mb:.2f} MB)")
         return content
-        
+
     except UnicodeDecodeError:
         return f"Error: File is not a text file or uses unsupported encoding: {location}"
     except PermissionError:
@@ -116,7 +130,9 @@ def parse_tool_arguments(args: Any) -> Dict[str, Any]:
     if isinstance(args, str):
         # Try JSON first
         try:
-            return json.loads(args)
+            parsed_json = json.loads(args)
+            if isinstance(parsed_json, dict):
+                return parsed_json
         except json.JSONDecodeError:
             pass
         
@@ -213,10 +229,3 @@ def strip_tool_calls(text: str) -> str:
     cleaned = re.sub(r"<tool_call>.*?</tool_call>", "", text, flags=re.DOTALL)
     return cleaned.strip()
 
-
-def truncate_tool_result(result: str, tool_name: str, max_chars: int) -> str:
-    """
-    DEPRECATED: No-op function kept for backward compatibility.
-    Returns result unchanged.
-    """
-    return result

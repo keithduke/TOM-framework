@@ -12,6 +12,7 @@ from .runtime import ApiRuntime, SessionData
 from .schemas import (
     ChatRequest,
     ChatResponse,
+    MessagePayload,
     MessageRequest,
     SessionCreateRequest,
     SessionState,
@@ -119,7 +120,7 @@ def _serialize_session(session: SessionData) -> SessionState:
         session_id=session.session_id,
         system_prompt=session.context.system_prompt,
         max_context_tokens=session.context.max_context_tokens,
-        messages=[{"role": msg["role"], "content": msg["content"]} for msg in session.context.messages],
+        messages=[MessagePayload(role=msg["role"], content=msg["content"]) for msg in session.context.messages],
     )
 
 

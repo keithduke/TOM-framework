@@ -38,6 +38,10 @@ class ModelManager:
     - Thinking/content separation
     """
     
+    model: Optional[Any] = None
+    tokenizer: Optional[Any] = None
+    cache_manager: Optional[PromptCacheManager] = None
+    
     def __init__(
         self,
         model_path: Path,
@@ -69,7 +73,7 @@ class ModelManager:
         self.auto_size_cache = auto_size_cache
         self.kv_bits = kv_bits
     
-    def load_model(self):
+    def load_model(self) -> None:
         """Load model and initialize cache"""
         try:
             self.model, self.tokenizer = load(str(self.model_path))
@@ -84,7 +88,7 @@ class ModelManager:
             logger.error(f"Failed to load model: {e}", exc_info=True)
             raise
     
-    def _initialize_cache(self):
+    def _initialize_cache(self) -> None:
         """Initialize prompt cache with intelligent sizing"""
         # Estimate static content tokens
         system_tokens = TokenCounter.estimate_tokens(
@@ -310,20 +314,20 @@ class ModelManager:
         
         return "", full_response.strip()
     
-    def reset_cache(self):
+    def reset_cache(self) -> None:
         """Manually reset cache"""
         if self.cache_manager:
             self.cache_manager.reset()
             self.run_gc()
             logger.info("Cache reset")
     
-    def run_gc(self):
+    def run_gc(self) -> None:
         """Force garbage collection"""
         gc.collect()
         mx.clear_cache()
         logger.debug("GC complete")
     
-    def get_cache_info(self) -> dict:
+    def get_cache_info(self) -> Dict[str, Any]:
         """Get cache statistics"""
         if not self.enable_cache or not self.cache_manager:
             return {

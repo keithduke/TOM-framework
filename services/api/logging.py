@@ -23,9 +23,9 @@ def log_request(action: str, *, session_id: Optional[str] = None, extra: dict | 
     logger.info("request.start %s", payload)
     try:
         yield
-        payload["duration_ms"] = round((time.perf_counter() - start) * 1000, 2)
+        payload["duration_ms"] = str(round((time.perf_counter() - start) * 1000, 2))
         logger.info("request.done %s", payload)
     except Exception:
-        payload["duration_ms"] = round((time.perf_counter() - start) * 1000, 2)
+        payload["duration_ms"] = str(round((time.perf_counter() - start) * 1000, 2))
         logger.exception("request.error %s", payload)
         raise
