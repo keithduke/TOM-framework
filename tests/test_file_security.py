@@ -1,5 +1,11 @@
-import pytest
+import sys
+import os
 from pathlib import Path
+
+# Add project root to sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import pytest
 from core.security import is_path_allowed, is_sensitive_file
 
 def test_path_allowed_home():

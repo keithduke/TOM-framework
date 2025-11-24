@@ -26,7 +26,7 @@ TOM is designed with security in mind:
 - **Sensitive file blocking**: Automatically prevents reading credentials
 - **Secure defaults**: All APIs bind to localhost only
 
-See [SECURITY.md](SECURITY.md) for detailed security information.
+See [docs/SECURITY.md](docs/SECURITY.md) for detailed security information.
 
 ---
 
@@ -278,10 +278,10 @@ To point the CLI at the API instead of loading the local model, launch it with `
 ## Diagnostics & Troubleshooting
 
 The repository ships with a few diagnostic harnesses that double as pytest suites and standalone scripts. When you `pytest -q` they act like normal tests, but running the files directly surfaces richer walkthroughs:
-- `python test_prompt_building.py` prints how prompts are assembled with/without tools and inspects tokenizer chat templates.
-- `python test_chat_template_issue.py` simulates the known chat-template failure modes (rejects, ignores, or honors the `tools` parameter) and suggests mitigations.
-- `python test_end_to_end.py` replays the entire tool-call pipeline, summarizing each phase and highlighting failures.
-- `python test_tool_system.py` exercises individual tool utilities with verbose output.
+- `python tests/test_prompt_building.py` prints how prompts are assembled with/without tools and inspects tokenizer chat templates.
+- `python tests/test_chat_template_issue.py` simulates the known chat-template failure modes (rejects, ignores, or honors the `tools` parameter) and suggests mitigations.
+- `python tests/test_end_to_end.py` replays the entire tool-call pipeline, summarizing each phase and highlighting failures.
+- `python tests/test_tool_system.py` exercises individual tool utilities with verbose output.
 
 Use these scripts whenever you need to diagnose prompt wiring or tool execution issues beyond the terse pytest output.
 
@@ -289,7 +289,7 @@ Use these scripts whenever you need to diagnose prompt wiring or tool execution 
 
 ## Architecture
 
-> See `ROADMAP.md` for the multi-phase plan that follows the Sprint 1 refactor.
+> See `docs/ROADMAP.md` for the multi-phase plan that follows the Sprint 1 refactor.
 
 ### Design Philosophy
 
@@ -309,7 +309,13 @@ Use these scripts whenever you need to diagnose prompt wiring or tool execution 
 ├── prompt_cache_manager.py # Intelligent prompt cache lifecycle
 ├── tools.py                # Tool system and built-in tools
 ├── utils.py                # Shared utility functions
-└── config.py               # Configuration constants
+├── config.py               # Configuration constants
+├── tests/                  # Test suite and diagnostic scripts
+│   ├── test_*.py
+└── docs/                   # Documentation and roadmaps
+    ├── SPRINT*.md
+    ├── ROADMAP.md
+    └── SECURITY.md
 ```
 
 ### Module Responsibilities

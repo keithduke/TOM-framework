@@ -6,7 +6,12 @@ HYPOTHESIS: The chat template accepts the 'tools' parameter but silently ignores
 so tools are never included in the prompt sent to the model.
 """
 
-import json
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import unittest
+
 import sys
 from pathlib import Path
 

@@ -97,7 +97,7 @@ def process_messages(
 pytest -v
 
 # Run specific test file
-pytest test_tool_system.py -v
+pytest tests/test_tool_system.py -v
 
 # Run with coverage
 pytest --cov=core --cov-report=term-missing
